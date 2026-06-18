@@ -1,0 +1,15 @@
+{
+  "team_card_ids": [26000000, 26000030, 26000021, 26000014, 27000006, 28000000, 28000011, 26000064],
+  "opponent_card_ids": [26000055, 26000011, 26000007, 26000012, 27000003, 28000001, 28000004, 26000018],
+  "team_evolution_levels": [1, 0, 0, 0, 1, 0, 0, 1],
+  "opponent_evolution_levels": [1, 1, 0, 0, 0, 0, 0, 0],
+  "team_hero_levels": [0, 0, 0, 0, 0, 0, 0, 0],
+  "opponent_hero_levels": [1, 0, 0, 0, 0, 0, 0, 0],
+  "team_card_roles": [1, 1, 1, 1, 1, 1, 1, 1],
+  "opponent_card_roles": [1, 1, 1, 1, 1, 1, 1, 1],
+  "team_tower_troop_id": 159000000,
+  "opponent_tower_troop_id": 159000000,
+  "segment": "ladder:9000-11999",
+  "patch": "2026-06",
+  "matrix_prior": 0.5
+}

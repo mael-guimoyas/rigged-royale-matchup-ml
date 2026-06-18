@@ -1,0 +1,50 @@
+database:
+  batch_size: 10000
+  statement_timeout_ms: 120000
+
+data:
+  raw_dir: data/raw
+  prepared_dir: data/prepared
+  dedup_db: data/dedup.sqlite3
+  state_file: data/extract-state.json
+  train_fraction: 0.70
+  validation_fraction: 0.15
+  require_exactly_eight_cards: true
+  allowed_modes: [ladder, ranked]
+  # Leave null to avoid treating raw API levels as comparable across rarities.
+  max_raw_average_level_difference: null
+  trophy_buckets: [0, 5000, 7000, 9000, 12000, 99999]
+  top_ladder_buckets: [100, 1000, 10000]
+  # Optional dotted callable: "my_package.my_prior:predict".
+  # It receives the parsed record and returns P(team wins) from your matrix.
+  matrix_prior_provider: null
+  # App repo used by `rigged-matchup attach-prior` to reuse the live empirical
+  # matchup classification rules instead of duplicating them in Python.
+  empirical_app_dir: ../riggedroyale
+
+model:
+  embedding_dim: 64
+  hidden_dim: 192
+  dropout: 0.15
+  max_evolution_level: 5
+  max_hero_level: 5
+  matrix_prior_strength: 1.0
+
+training:
+  seed: 42
+  epochs: 5
+  batch_size: 2048
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  num_workers: 0
+  gradient_clip_norm: 2.0
+  early_stopping_patience: 2
+  device: auto
+  artifact_dir: artifacts
+
+evaluation:
+  bad_threshold: 0.40
+  neutral_low: 0.45
+  neutral_high: 0.55
+  good_threshold: 0.60
+  calibration_bins: 15

@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rigged-royale-matchup-ml"
+version = "0.1.0"
+description = "Leakage-safe Clash Royale matchup quality training pipeline"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "duckdb>=1.1",
+  "numpy>=1.26",
+  "pyarrow>=17",
+  "psycopg[binary]>=3.2",
+  "python-dotenv>=1.0",
+  "PyYAML>=6.0",
+  "scikit-learn>=1.5",
+  "torch>=2.4",
+  "tqdm>=4.66",
+  "typer>=0.12",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3", "ruff>=0.6"]
+
+[project.scripts]
+rigged-matchup = "rigged_matchup_ml.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
