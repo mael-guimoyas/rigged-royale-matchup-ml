@@ -98,6 +98,25 @@ def _optional_int(value: Any) -> int | None:
         return None
 
 
+def _find_first_numeric_key(value: Any, names: set[str]) -> int | None:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if key in names:
+                parsed = _optional_int(child)
+                if parsed is not None and parsed > 0:
+                    return parsed
+        for child in value.values():
+            parsed = _find_first_numeric_key(child, names)
+            if parsed is not None:
+                return parsed
+    elif isinstance(value, list):
+        for child in value:
+            parsed = _find_first_numeric_key(child, names)
+            if parsed is not None:
+                return parsed
+    return None
+
+
 def canonical_game_id(battle_time: datetime, team: Deck, opponent: Deck) -> str:
     sides = sorted(
         [
@@ -134,7 +153,12 @@ def ranked_league_number(raw: dict[str, Any]) -> int | None:
         league = _optional_int(value)
         if league is not None and league > 0:
             return league
-    return None
+    return _find_first_numeric_key(raw, {"leagueNumber", "league_number"})
+
+
+def ranked_segment(raw: dict[str, Any]) -> str:
+    league = ranked_league_number(raw)
+    return f"ranked:league-{league}" if league is not None else "ranked:unknown"
 
 
 def segment_for(
@@ -145,8 +169,7 @@ def segment_for(
 ) -> str:
     mode = (mode_key or "other").lower()
     if mode == "ranked":
-        league = ranked_league_number(raw or {})
-        return f"ranked:league-{league}" if league is not None else "ranked:unknown"
+        return ranked_segment(raw or {})
     if mode != "ladder":
         return mode
     rank = deck.global_rank
@@ -202,7 +225,11 @@ def parse_battle_row(row: dict[str, Any], data_config: dict[str, Any]) -> dict[s
         return None
     battle_time = _as_datetime(row.get("battle_time") or raw.get("battleTime"))
     inserted_at = _as_datetime(row.get("inserted_at"))
-    segment = segment_for(team, mode_key, data_config, raw)
+    sql_league = _optional_int(row.get("league_number"))
+    if mode_key == "ranked" and sql_league is not None and sql_league > 0:
+        segment = f"ranked:league-{sql_league}"
+    else:
+        segment = segment_for(team, mode_key, data_config, raw)
     return {
         "game_id": canonical_game_id(battle_time, team, opponent),
         "source_fingerprint": str(row["fingerprint"]),

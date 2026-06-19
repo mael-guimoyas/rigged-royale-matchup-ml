@@ -1,6 +1,12 @@
 from datetime import datetime, timezone
 
-from rigged_matchup_ml.domain import ROLE_CHAMPION, canonical_game_id, parse_battle_row, parse_deck
+from rigged_matchup_ml.domain import (
+    ROLE_CHAMPION,
+    canonical_game_id,
+    parse_battle_row,
+    parse_deck,
+    ranked_league_number,
+)
 
 
 def player(tag: str, crowns: int, offset: int = 0) -> dict:
@@ -67,6 +73,26 @@ def test_ranked_segment_uses_league_number() -> None:
     assert record["segment"] == "ranked:league-7"
 
 
+def test_ranked_segment_uses_sql_league_number_before_json() -> None:
+    record = parse_battle_row(
+        {
+            "fingerprint": "ranked-sql-league",
+            "battle_time": datetime(2026, 6, 18, tzinfo=timezone.utc),
+            "inserted_at": datetime(2026, 6, 18, tzinfo=timezone.utc),
+            "mode_key": "ranked",
+            "league_number": 6,
+            "raw": {
+                "battleTime": "20260618T000000.000Z",
+                "team": [player("#A", 1)],
+                "opponent": [player("#B", 0, 100)],
+            },
+        },
+        DATA_CONFIG,
+    )
+    assert record is not None
+    assert record["segment"] == "ranked:league-6"
+
+
 def test_ranked_segment_does_not_infer_league_from_trophies() -> None:
     team = {**player("#A", 1), "startingTrophies": 2400}
     opponent = {**player("#B", 0, 100), "startingTrophies": 2380}
@@ -86,3 +112,22 @@ def test_ranked_segment_does_not_infer_league_from_trophies() -> None:
     )
     assert record is not None
     assert record["segment"] == "ranked:unknown"
+
+
+def test_ranked_league_number_falls_back_to_nested_search() -> None:
+    assert (
+        ranked_league_number(
+            {
+                "team": [
+                    {
+                        "profile": {
+                            "currentPathOfLegendSeasonResult": {
+                                "leagueNumber": 8,
+                            }
+                        }
+                    }
+                ]
+            }
+        )
+        == 8
+    )

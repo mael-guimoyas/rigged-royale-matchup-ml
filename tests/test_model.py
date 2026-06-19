@@ -22,7 +22,20 @@ def batch() -> dict[str, torch.Tensor]:
 
 
 def test_probability_is_antisymmetric() -> None:
-    model = SymmetricMatchupModel(32, 4, 3, 3, dropout=0.0)
+    model = SymmetricMatchupModel(
+        32,
+        4,
+        3,
+        3,
+        dropout=0.0,
+        use_cross_card_interactions=True,
+        use_intra_deck_synergies=True,
+        card_dropout=0.0,
+        use_matchup_transformer=True,
+        transformer_layers=1,
+        transformer_heads=4,
+        use_segment_adapters=True,
+    )
     model.eval()
     original = batch()
     reverse = {
@@ -42,3 +55,40 @@ def test_probability_is_antisymmetric() -> None:
         probability = model.probability(original).item()
         reverse_probability = model.probability(reverse).item()
     assert abs(probability + reverse_probability - 1.0) < 1e-6
+
+
+def test_probability_is_antisymmetric_with_learnable_prior() -> None:
+    model = SymmetricMatchupModel(
+        32,
+        4,
+        3,
+        3,
+        dropout=0.0,
+        matrix_prior_strength=0.8,
+        matrix_prior_learnable=True,
+        use_cross_card_interactions=True,
+        use_intra_deck_synergies=True,
+        use_matchup_transformer=True,
+        use_segment_adapters=True,
+    )
+    model.eval()
+    original = {**batch(), "matrix_prior": torch.tensor([0.7])}
+    reverse = {
+        **original,
+        "team_cards": original["opponent_cards"],
+        "opponent_cards": original["team_cards"],
+        "team_evos": original["opponent_evos"],
+        "opponent_evos": original["team_evos"],
+        "team_heroes": original["opponent_heroes"],
+        "opponent_heroes": original["team_heroes"],
+        "team_roles": original["opponent_roles"],
+        "opponent_roles": original["team_roles"],
+        "team_tower": original["opponent_tower"],
+        "opponent_tower": original["team_tower"],
+        "matrix_prior": torch.tensor([0.3]),
+    }
+    with torch.no_grad():
+        probability = model.probability(original).item()
+        reverse_probability = model.probability(reverse).item()
+    assert abs(probability + reverse_probability - 1.0) < 1e-6
+    assert isinstance(model.matrix_prior_strength, torch.nn.Parameter)

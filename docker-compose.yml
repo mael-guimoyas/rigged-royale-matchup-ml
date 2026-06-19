@@ -1,0 +1,15 @@
+# Local-dev inference service. Point the site at it with
+#   ML_INFERENCE_URL=http://localhost:8080
+services:
+  matchup-inference:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      MODEL_CHECKPOINT: /app/artifacts/matchup-model.pt
+      MODEL_NAME: symmetric-matchup
+      # PREDICT_API_KEY: set to require an X-API-Key header (must match the site).
+    volumes:
+      # Mount the trained checkpoint read-only so rebuilds aren't needed to swap models.
+      - ./artifacts:/app/artifacts:ro
+    restart: unless-stopped

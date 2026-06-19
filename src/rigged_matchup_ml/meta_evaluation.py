@@ -38,6 +38,12 @@ def evaluate_meta(
     model.load_state_dict(payload["model_state"])
     model.to(device).eval()
     temperature = float(payload["temperature"])
+    segment_temperatures = payload.get("segment_temperatures") or {}
+    calibration = payload.get("calibration") or {}
+    global_calibration = calibration.get("global", {})
+    global_temperature = float(global_calibration.get("temperature", temperature))
+    global_bias = float(global_calibration.get("bias", 0.0))
+    segment_calibrations = calibration.get("segments") or {}
     dataset = pads.dataset(prepared_dir / "test", format="parquet")
     database_path = output_dir / "meta-evaluation.duckdb"
     connection = duckdb.connect(str(database_path))
@@ -55,7 +61,25 @@ def evaluate_meta(
         rows = record_batch.to_pylist()
         encoded = default_collate([encode_row(row, payload["vocabulary"]) for row in rows])
         encoded = {key: value.to(device) for key, value in encoded.items()}
-        probabilities = model.probability(encoded, temperature=temperature).cpu().tolist()
+        logits = model(encoded)
+        temperatures: list[float] = []
+        biases: list[float] = []
+        for row in rows:
+            segment = str(row["segment"])
+            if segment_calibrations:
+                segment_calibration = segment_calibrations.get(segment, {})
+                temperatures.append(
+                    float(segment_calibration.get("temperature", global_temperature))
+                )
+                biases.append(float(segment_calibration.get("bias", global_bias)))
+            else:
+                temperatures.append(float(segment_temperatures.get(segment, temperature)))
+                biases.append(0.0)
+        batch_temperatures = torch.tensor(
+            temperatures, dtype=torch.float32, device=device
+        ).clamp_min(1e-4)
+        batch_biases = torch.tensor(biases, dtype=torch.float32, device=device)
+        probabilities = torch.sigmoid(logits / batch_temperatures + batch_biases).cpu().tolist()
         table = pa.table(
             {
                 "game_id": [row["game_id"] for row in rows],
@@ -92,7 +116,9 @@ def evaluate_meta(
           coalesce(sum(n)::double / (select count(*) from predictions), 0) coverage,
           coalesce(sum(n * (predicted_class = observed_class)::int)::double / nullif(sum(n),0), 0)
             meta_weighted_class_accuracy,
-          coalesce(avg(abs(predicted_rate - observed_rate)), 0) matchup_mae
+          coalesce(avg(abs(predicted_rate - observed_rate)), 0) matchup_mae,
+          coalesce(sum(n * abs(predicted_rate - observed_rate)) / nullif(sum(n),0), 0)
+            matchup_mae_weighted
         from supported
         """
     ).fetchone()

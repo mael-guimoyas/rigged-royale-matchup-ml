@@ -1,6 +1,6 @@
 database:
-  batch_size: 10000
-  statement_timeout_ms: 120000
+  batch_size: 25000
+  statement_timeout_ms: 240000
 
 data:
   raw_dir: data/raw
@@ -28,17 +28,40 @@ model:
   dropout: 0.15
   max_evolution_level: 5
   max_hero_level: 5
-  matrix_prior_strength: 1.0
+  # Weight on the empirical matrix logit. 0.0 ignores the prior entirely (the
+  # network learns from cards only). To actually USE an attached matrix prior,
+  # run `attach-prior` then set matrix_prior_learnable: true (recommended) or a
+  # fixed strength > 0. With a constant 0.5 prior this has no effect.
+  matrix_prior_strength: 0.0
+  matrix_prior_learnable: false
+  use_cross_card_interactions: true
+  use_intra_deck_synergies: true
+  card_dropout: 0.05
+  use_matchup_transformer: true
+  transformer_layers: 1
+  transformer_heads: 4
+  use_segment_adapters: true
+  # Learned oriented card-vs-card interaction (A counters B) instead of a plain
+  # symmetric Hadamard product. Initialised to identity, learns from win/loss.
+  use_bilinear_cross: true
 
 training:
   seed: 42
-  epochs: 5
-  batch_size: 2048
+  epochs: 10
+  batch_size: 256
+  evaluation_batch_size: 4096
+  gradient_accumulation_steps: 8
   learning_rate: 0.001
   weight_decay: 0.0001
   num_workers: 0
   gradient_clip_norm: 2.0
-  early_stopping_patience: 2
+  early_stopping_patience: 3
+  segment_calibration_min_rows: 2000
+  # Linear warmup fraction then cosine decay of the learning rate.
+  warmup_fraction: 0.05
+  # Soft targets toward 0.5. Win/loss labels are very noisy; a little smoothing
+  # reduces over-confidence and improves Brier/calibration.
+  label_smoothing: 0.02
   device: auto
   artifact_dir: artifacts
 
@@ -48,3 +71,6 @@ evaluation:
   neutral_high: 0.55
   good_threshold: 0.60
   calibration_bins: 15
+  # Bootstrap resamples for confidence intervals on AUC/Brier/log-loss/accuracy.
+  # Essential on small unseen-matchup splits. Set 0 to disable.
+  bootstrap_samples: 300
