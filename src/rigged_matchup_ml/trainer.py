@@ -315,7 +315,10 @@ def train_model(config: AppConfig) -> Path:
         optimizer_options["fused"] = True
     try:
         optimizer = torch.optim.AdamW(model.parameters(), **optimizer_options)
-    except TypeError:
+    except (TypeError, AttributeError, RuntimeError):
+        # Some torch builds reject `fused` (TypeError) or break importing the
+        # fused kernel's lazy torch._dynamo dependency (AttributeError on e.g.
+        # Kaggle images). Fall back to the plain optimizer, which is unaffected.
         optimizer_options.pop("fused", None)
         optimizer = torch.optim.AdamW(model.parameters(), **optimizer_options)
     loss_fn = nn.BCEWithLogitsLoss()
