@@ -48,12 +48,12 @@ model:
 training:
   seed: 42
   epochs: 10
-  batch_size: 256
+  batch_size: 2048
   evaluation_batch_size: 4096
-  gradient_accumulation_steps: 8
+  gradient_accumulation_steps: 1
   learning_rate: 0.001
   weight_decay: 0.0001
-  num_workers: 0
+  num_workers: 2
   gradient_clip_norm: 2.0
   early_stopping_patience: 3
   segment_calibration_min_rows: 2000
