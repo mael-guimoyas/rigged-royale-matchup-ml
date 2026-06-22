@@ -41,6 +41,11 @@ class MatchupRequest(BaseModel):
     trophy_diff: int | None = 0
     team_evolution_card_ids: list[int] = Field(default_factory=list)
     opponent_evolution_card_ids: list[int] = Field(default_factory=list)
+    # Per-card counter / synergy attributions are only needed for the headline
+    # matchup of each battle, not the expected-context or meta-panel requests, so
+    # the caller opts in to avoid the extra attention pass on the high-fan-out
+    # requests.
+    include_interactions: bool = False
 
     @field_validator("team_card_ids", "opponent_card_ids")
     @classmethod
@@ -48,6 +53,17 @@ class MatchupRequest(BaseModel):
         if len(set(value)) != len(value):
             raise ValueError("deck cards must be unique")
         return value
+
+
+class CardInteraction(BaseModel):
+    source_card_id: int
+    target_card_id: int
+    weight: float
+
+
+class CardInteractions(BaseModel):
+    answers: list[CardInteraction]
+    threats: list[CardInteraction]
 
 
 class PredictionResponse(BaseModel):
@@ -58,6 +74,10 @@ class PredictionResponse(BaseModel):
     model_name: str | None
     model_version: str | None
     explanation: dict
+    # Model-derived, never a hardcoded table; absent when the request did not opt
+    # in or the checkpoint has no interaction terms.
+    card_interactions: CardInteractions | None = None
+    synergies: list[CardInteraction] | None = None
 
 
 # --- output mapping (ported from the obsolete sklearn container) ---------------
@@ -144,7 +164,9 @@ def request_to_row(request: MatchupRequest, vocabulary: dict[str, Any]) -> dict[
 
 def build_response(bundle: dict[str, Any], request: MatchupRequest) -> PredictionResponse:
     row = request_to_row(request, bundle["vocabulary"])
-    result = predict_from_row(bundle, row)
+    result = predict_from_row(
+        bundle, row, include_interactions=request.include_interactions
+    )
     probability = max(0.0, min(1.0, float(result["team_win_probability"])))
     has_context = (
         request.team_avg_card_level is not None
@@ -152,6 +174,17 @@ def build_response(bundle: dict[str, Any], request: MatchupRequest) -> Predictio
     )
     feature_version = bundle.get("feature_version")
     model_version = f"v{feature_version}" if feature_version is not None else None
+
+    interactions = result.get("interactions")
+    card_interactions: CardInteractions | None = None
+    synergies: list[CardInteraction] | None = None
+    if interactions is not None:
+        card_interactions = CardInteractions(
+            answers=[CardInteraction(**hit) for hit in interactions["answers"]],
+            threats=[CardInteraction(**hit) for hit in interactions["threats"]],
+        )
+        synergies = [CardInteraction(**hit) for hit in interactions["synergies"]]
+
     return PredictionResponse(
         win_probability=round(probability, 6),
         matchup_label=probability_to_label(probability),
@@ -167,6 +200,8 @@ def build_response(bundle: dict[str, Any], request: MatchupRequest) -> Predictio
             "temperature": result["temperature"],
             "bias": result["bias"],
         },
+        card_interactions=card_interactions,
+        synergies=synergies,
     )
 
 

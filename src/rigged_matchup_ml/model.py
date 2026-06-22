@@ -91,7 +91,12 @@ class PairSummaryEncoder(nn.Module):
             nn.Linear(hidden_dim, embedding_dim),
         )
 
-    def forward(self, pair_features: torch.Tensor, pair_mask: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        pair_features: torch.Tensor,
+        pair_mask: torch.Tensor,
+        return_weights: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         pair_mask = pair_mask.bool()
         pair_values = pair_features * pair_mask.unsqueeze(-1)
         pair_count = pair_mask.sum(dim=1, keepdim=True).clamp_min(1)
@@ -102,7 +107,13 @@ class PairSummaryEncoder(nn.Module):
         pair_weights = torch.softmax(pair_scores, dim=1) * pair_mask
         pair_weights = pair_weights / pair_weights.sum(dim=1, keepdim=True).clamp_min(1e-6)
         pair_attention = (pair_values * pair_weights.unsqueeze(-1)).sum(dim=1)
-        return self.projection(torch.cat([pair_mean, pair_max, pair_attention], dim=-1))
+        summary = self.projection(torch.cat([pair_mean, pair_max, pair_attention], dim=-1))
+        # pair_weights is the model's own per-pair salience (softmax over the pairs):
+        # which card-vs-card pairing dominates this side's interaction summary. It is
+        # the attribution source for the served explanations — not a hardcoded table.
+        if return_weights:
+            return summary, pair_weights
+        return summary
 
 
 class CardInteractionEncoder(nn.Module):
@@ -138,24 +149,33 @@ class CardInteractionEncoder(nn.Module):
         first_mask: torch.Tensor,
         second_cards: torch.Tensor,
         second_mask: torch.Tensor,
-    ) -> torch.Tensor:
+        return_weights: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         first_projected = (
             self.cross_bilinear(first_cards)
             if self.cross_bilinear is not None
             else first_cards
         )
+        # Flattened pair index is first * 8 + second, i.e. [source, target] when the
+        # weights are viewed as (batch, 8, 8): row = first/source deck position,
+        # column = second/target deck position.
         pair_features = (
             first_projected[:, :, None, :] * second_cards[:, None, :, :]
         ).flatten(1, 2)
         pair_mask = (first_mask[:, :, None] & second_mask[:, None, :]).flatten(1, 2)
-        return self.cross_pairs(pair_features, pair_mask)
+        return self.cross_pairs(pair_features, pair_mask, return_weights=return_weights)
 
-    def within(self, cards: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    def within(
+        self,
+        cards: torch.Tensor,
+        mask: torch.Tensor,
+        return_weights: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         first = cards[:, self.pair_first_indices, :]
         second = cards[:, self.pair_second_indices, :]
         pair_features = first * second
         pair_mask = mask[:, self.pair_first_indices] & mask[:, self.pair_second_indices]
-        return self.deck_pairs(pair_features, pair_mask)
+        return self.deck_pairs(pair_features, pair_mask, return_weights=return_weights)
 
 
 class SymmetricMatchupModel(nn.Module):
@@ -438,3 +458,64 @@ class SymmetricMatchupModel(nn.Module):
     @torch.no_grad()
     def probability(self, batch: dict[str, torch.Tensor], temperature: float = 1.0) -> torch.Tensor:
         return torch.sigmoid(self.forward(batch) / max(temperature, 1e-4))
+
+    @torch.no_grad()
+    def explain(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        """Model-native per-card-pair attributions for a matchup.
+
+        Returns the learned interaction salience, never a hardcoded table:
+
+        - ``cross_team_to_opponent`` / ``cross_opponent_to_team``: ``(B, 8, 8)``
+          softmax attention over the 64 card-vs-card pairs, indexed
+          ``[source_position, target_position]``. The team→opponent term feeds the
+          team's orientation score (its advantage channel) and vice versa, so it
+          maps to "your card answers theirs" / "their card threatens yours".
+        - ``team_synergy`` / ``opponent_synergy``: ``(B, 28)`` attention over the
+          unordered intra-deck pairs, aligned with ``synergy_pairs`` ``(2, 28)``.
+
+        Empty dict when the checkpoint has no interaction terms.
+        """
+        self.eval()
+        if self.card_interactions is None:
+            return {}
+        _, team_cards, team_mask = self.deck_encoder.encode(
+            batch["team_cards"],
+            batch["team_evos"],
+            batch["team_heroes"],
+            batch["team_roles"],
+            batch["team_tower"],
+        )
+        _, opponent_cards, opponent_mask = self.deck_encoder.encode(
+            batch["opponent_cards"],
+            batch["opponent_evos"],
+            batch["opponent_heroes"],
+            batch["opponent_roles"],
+            batch["opponent_tower"],
+        )
+        result: dict[str, torch.Tensor] = {}
+        if self.use_cross_card_interactions:
+            _, team_to_opponent = self.card_interactions.cross(
+                team_cards, team_mask, opponent_cards, opponent_mask, return_weights=True
+            )
+            _, opponent_to_team = self.card_interactions.cross(
+                opponent_cards, opponent_mask, team_cards, team_mask, return_weights=True
+            )
+            result["cross_team_to_opponent"] = team_to_opponent.view(-1, 8, 8)
+            result["cross_opponent_to_team"] = opponent_to_team.view(-1, 8, 8)
+        if self.use_intra_deck_synergies:
+            _, team_synergy = self.card_interactions.within(
+                team_cards, team_mask, return_weights=True
+            )
+            _, opponent_synergy = self.card_interactions.within(
+                opponent_cards, opponent_mask, return_weights=True
+            )
+            result["team_synergy"] = team_synergy
+            result["opponent_synergy"] = opponent_synergy
+            result["synergy_pairs"] = torch.stack(
+                [
+                    self.card_interactions.pair_first_indices,
+                    self.card_interactions.pair_second_indices,
+                ],
+                dim=0,
+            )
+        return result

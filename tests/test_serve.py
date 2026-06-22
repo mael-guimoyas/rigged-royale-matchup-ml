@@ -197,6 +197,43 @@ def test_predict_rejects_duplicate_cards(client) -> None:
     assert response.status_code == 422
 
 
+def test_predict_omits_interactions_by_default(client) -> None:
+    body = client.post("/predict", json=WEB_PAYLOAD).json()
+    assert body["card_interactions"] is None
+    assert body["synergies"] is None
+
+
+def test_predict_includes_model_interactions_when_requested(client) -> None:
+    payload = {**WEB_PAYLOAD, "include_interactions": True}
+    body = client.post("/predict", json=payload).json()
+
+    interactions = body["card_interactions"]
+    assert interactions is not None
+    team = set(WEB_PAYLOAD["team_card_ids"])
+    opponent = set(WEB_PAYLOAD["opponent_card_ids"])
+
+    # Answers = your card vs their card; threats = their card vs your card.
+    assert 1 <= len(interactions["answers"]) <= 3
+    for hit in interactions["answers"]:
+        assert hit["source_card_id"] in team
+        assert hit["target_card_id"] in opponent
+        assert 0.0 <= hit["weight"] <= 1.0
+    for hit in interactions["threats"]:
+        assert hit["source_card_id"] in opponent
+        assert hit["target_card_id"] in team
+        assert 0.0 <= hit["weight"] <= 1.0
+
+    # Synergies are unordered pairs inside the player's own deck.
+    assert len(body["synergies"]) >= 1
+    for hit in body["synergies"]:
+        assert hit["source_card_id"] in team
+        assert hit["target_card_id"] in team
+        assert hit["source_card_id"] != hit["target_card_id"]
+
+    # Strongest pair is peak-normalised to 1.0.
+    assert max(hit["weight"] for hit in interactions["answers"]) == pytest.approx(1.0)
+
+
 def test_real_checkpoint_loads_if_compatible() -> None:
     """Smoke-load the on-disk trained checkpoint when one exists and matches the
     current model. Skips (does not fail) when absent or stale so an evolving

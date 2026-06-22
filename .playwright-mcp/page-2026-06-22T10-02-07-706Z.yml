@@ -1,0 +1,540 @@
+- generic [ref=e1]:
+  - banner [ref=e2]:
+    - generic [ref=e4]:
+      - link "Rigged Royale Home" [ref=e5] [cursor=pointer]:
+        - /url: /
+        - text: Rigged Royale
+      - navigation "Main navigation" [ref=e6]:
+        - link "Analyze" [ref=e7] [cursor=pointer]:
+          - /url: /
+        - link "Players" [ref=e8] [cursor=pointer]:
+          - /url: /players
+        - link "Decks" [ref=e9] [cursor=pointer]:
+          - /url: /decks
+        - link "Correlations" [ref=e10] [cursor=pointer]:
+          - /url: /correlations
+        - link "Methodology" [ref=e11] [cursor=pointer]:
+          - /url: /methodology
+  - main [ref=e26]:
+    - generic [ref=e28]:
+      - generic [ref=e29]:
+        - paragraph [ref=e30]: SUBJECT UNDER INVESTIGATION
+        - generic [ref=e31]:
+          - heading "GAITH 10" [level=1] [ref=e32]
+          - generic [ref=e33]: "#220V8Y0UUP"
+          - generic [ref=e34]: Trophies 7297
+          - generic [ref=e35]: best 7412
+          - generic [ref=e36]: PoL League 1
+      - generic [ref=e37]:
+        - button "TRACK PLAYER" [ref=e39]
+        - link "PUBLIC BOARD" [ref=e40] [cursor=pointer]:
+          - /url: /players
+        - link "HOW IT WORKS" [ref=e41] [cursor=pointer]:
+          - /url: /methodology
+        - link "DATA LAB" [ref=e42] [cursor=pointer]:
+          - /url: /correlations
+    - navigation "Battle type" [ref=e44]:
+      - generic [ref=e45]:
+        - link "All battles 31" [ref=e46] [cursor=pointer]:
+          - /url: /player/220V8Y0UUP
+          - text: All battles
+          - generic [ref=e47]: "31"
+        - link "Ladder 31" [ref=e48] [cursor=pointer]:
+          - /url: /player/220V8Y0UUP?mode=ladder
+          - text: Ladder
+          - generic [ref=e49]: "31"
+    - generic [ref=e50]:
+      - generic [ref=e51]:
+        - generic [ref=e52]:
+          - generic [ref=e53]:
+            - img [ref=e54]:
+              - generic [ref=e61]: RIGGED
+              - generic [ref=e62]: BLESSED
+            - generic: 21/100
+          - generic [ref=e64]:
+            - generic [ref=e65]: Supercell Has a Folder on You
+            - paragraph [ref=e66]: Your name is on a whiteboard somewhere in Helsinki.
+          - paragraph [ref=e67]: High confidence - the sample size holds up in court. Analyzed 31 of 31 stored battles for all battles.
+          - paragraph [ref=e68]: "Latest API window: 30 ranked/ladder battles. Each new analysis merges unseen ranked/ladder battles into this player's history; a report uses up to the newest 200."
+          - paragraph [ref=e69]: "Recommended: turn on Tracking (top of this file). A scheduled job then keeps collecting this player's battles beyond the live API window — a larger sample over time means higher confidence and a more precise score, instead of one pulled toward 50 on thin evidence."
+          - paragraph [ref=e70]:
+            - text: This is an observational anomaly score, not proof that matchmaking selected an opponent from your deck or win rate. Factor scores are measured against a fair baseline, then weighted by available evidence.
+            - link "Read the public methodology." [ref=e71] [cursor=pointer]:
+              - /url: /methodology
+          - generic [ref=e73]:
+            - generic [ref=e74]:
+              - paragraph [ref=e75]: RIGGED SCORE OVER TIME
+              - generic [ref=e76]: 4 checks / +2
+            - 'img "Rigged score history: 4 checks, latest 21, range 17-21." [ref=e77]'
+            - generic [ref=e82]:
+              - generic [ref=e83]: 2026-06-18
+              - generic [ref=e84]: now 21 / Supercell Has a Folder on You
+              - generic [ref=e85]: 2026-06-18
+        - generic [ref=e86]:
+          - paragraph [ref=e87]: WHY THIS SCORE?
+          - heading "Three checks, weighted by evidence" [level=2] [ref=e88]
+          - paragraph [ref=e89]: Below 50 means the sample was harder than a fair draw; above 50 means it was softer. Battle rows below show the same matchup read one game at a time.
+          - generic [ref=e90]:
+            - generic [ref=e91]:
+              - generic [ref=e92]:
+                - generic [ref=e93]:
+                  - paragraph [ref=e94]: Matchup draw
+                  - paragraph [ref=e95]: Were the opponents unusually hard for this deck?
+                - generic [ref=e96]:
+                  - paragraph [ref=e97]: "0"
+                  - paragraph [ref=e98]: 60% weight
+              - paragraph [ref=e99]: Hurting score
+              - paragraph [ref=e100]: Average matchup rating -0.7 vs +1.1 expected for this deck; 17/31 clearly bad, 7/31 favored.
+            - generic [ref=e101]:
+              - generic [ref=e102]:
+                - generic [ref=e103]:
+                  - paragraph [ref=e104]: Timing pressure
+                  - paragraph [ref=e105]: Did bad matchups land after streaks or deck changes?
+                - generic [ref=e106]:
+                  - paragraph [ref=e107]: "33"
+                  - paragraph [ref=e108]: 29% weight
+              - paragraph [ref=e109]: Hurting score
+              - paragraph [ref=e110]: 6/9 hard bad after 3+ wins; 0/1 hard bad after deck changes; 9 bad in a row.
+            - generic [ref=e111]:
+              - generic [ref=e112]:
+                - generic [ref=e113]:
+                  - paragraph [ref=e114]: Level context
+                  - paragraph [ref=e115]: Were card levels helping or hurting the read?
+                - generic [ref=e116]:
+                  - paragraph [ref=e117]: "32"
+                  - paragraph [ref=e118]: 11% weight
+              - paragraph [ref=e119]: Hurting score
+              - paragraph [ref=e120]: Average card level gap -0.5. This is context only for the matchup rows.
+        - generic [ref=e121]:
+          - generic [ref=e122]:
+            - paragraph [ref=e123]: SKILL RATING — PILOT vs DECK
+            - generic [ref=e124]:
+              - generic [ref=e125]: "73"
+              - generic [ref=e126]: /100
+            - generic [ref=e131]:
+              - generic [ref=e132]: Deck carried
+              - generic [ref=e133]: Outplayed
+            - generic [ref=e134]:
+              - generic [ref=e135]:
+                - paragraph [ref=e136]: "13.6"
+                - paragraph [ref=e137]: Expected wins
+              - generic [ref=e138]: vs
+              - generic [ref=e139]:
+                - paragraph [ref=e140]: "18"
+                - paragraph [ref=e141]: Actual wins
+              - generic [ref=e142]:
+                - paragraph [ref=e143]:
+                  - text: "+14"
+                  - generic [ref=e144]: ±17
+                - paragraph [ref=e145]: Pts vs expected · 95% CI
+            - paragraph [ref=e146]: Outplaying the Bracket
+            - paragraph [ref=e147]: Consistently beating the matchup math. That's you, not the deck.
+            - paragraph [ref=e148]: The win-chance model expected 13.6 wins across 31 battles; you took 18 — 14 points above expectation (±17 pts at 95%).
+          - paragraph [ref=e149]: "Separate from the rigged score: this measures how your results compare to what the matchup, level, and trophy model predicts — a proxy for piloting, not a read on individual in-match decisions."
+        - generic [ref=e150]:
+          - heading "FACTOR BREAKDOWN" [level=2] [ref=e151]
+          - generic [ref=e152]:
+            - generic [ref=e153]:
+              - generic [ref=e154]:
+                - generic [ref=e155]:
+                  - text: Matchup Draw
+                  - generic [ref=e156]: (60% of this verdict)
+                - generic [ref=e157]: "0"
+              - paragraph [ref=e159]: average matchup rating -0.7 vs +1.1 expected for this deck. 17/31 clearly bad, 7/31 favored. Measured against what a fair draw would hand your own decks (expected 25% bad or worse, 3% clearly bad for this deck vs a fair spread of 200 common decks), that ran harder than expected.
+            - generic [ref=e160]:
+              - generic [ref=e161]:
+                - generic [ref=e162]:
+                  - text: Timing Pressure
+                  - generic [ref=e163]: (29% of this verdict)
+                - generic [ref=e164]: "33"
+              - paragraph [ref=e167]: "6/9 unfavorable after a 3+ win streak (67% vs Fair Player 30.82%); 0/1 unfavorable right after a deck change (0% vs Fair Player 30.82%; 0.00x fair rate); longest unfavorable matchup run: 9; unique trigger slots concentrated bad matchups (71% vs 55% overall)."
+            - generic [ref=e168]:
+              - generic [ref=e169]:
+                - generic [ref=e170]:
+                  - text: Card Levels
+                  - generic [ref=e171]: (11% of this verdict)
+                - generic [ref=e172]: "32"
+              - paragraph [ref=e175]: You were the underleveled one in most lobbies.
+        - generic [ref=e176]:
+          - heading "COMPARE TO THE BENCHMARK" [level=2] [ref=e177]
+          - paragraph [ref=e178]: See where this file diverges from what it should look like.
+          - button "COMPARE TO AVERAGE PLAYER" [ref=e180]
+      - generic [ref=e181]:
+        - generic [ref=e183]:
+          - paragraph [ref=e184]: TIMING EVIDENCE
+          - generic [ref=e185]:
+            - button "Clearly bad matchups 17/31 55% clearly bad vs Fair Player 30.82%" [ref=e186]:
+              - paragraph [ref=e187]: Clearly bad matchups
+              - paragraph [ref=e188]: 17/31
+              - paragraph [ref=e189]: 55% clearly bad vs Fair Player 30.82%
+            - button "After 3+ wins 6/9 clearly bad 67% clearly bad vs Fair Player 30.82% next matchup only" [ref=e190]:
+              - paragraph [ref=e191]: After 3+ wins
+              - paragraph [ref=e192]: 6/9 clearly bad
+              - paragraph [ref=e193]: 67% clearly bad vs Fair Player 30.82%
+              - paragraph [ref=e194]: next matchup only
+            - button "After deck change 0/1 clearly bad 0% clearly bad vs Fair Player 30.82% 0.00x the Fair Player rate" [ref=e195]:
+              - paragraph [ref=e196]: After deck change
+              - paragraph [ref=e197]: 0/1 clearly bad
+              - paragraph [ref=e198]: 0% clearly bad vs Fair Player 30.82%
+              - paragraph [ref=e199]: 0.00x the Fair Player rate
+            - button "Longest bad run 9 consecutive matchups" [ref=e200]:
+              - paragraph [ref=e201]: Longest bad run
+              - paragraph [ref=e202]: "9"
+              - paragraph [ref=e203]: consecutive matchups
+          - paragraph [ref=e204]: Click a tile to filter the battle audit to those games. Rates use the 30.82% Fair Player anchor; the score separately checks whether bad matchups cluster in these timing slots.
+        - generic [ref=e205]:
+          - generic [ref=e206]:
+            - paragraph [ref=e207]: Deck on file (latest all battles battle)
+            - generic [ref=e208]:
+              - generic "Executioner (lvl 10) — evolved" [ref=e209]:
+                - img "Executioner" [ref=e210]
+                - generic [ref=e211]: "10"
+                - generic [ref=e212]: EVO
+              - generic "Golden Knight (lvl 12)" [ref=e213]:
+                - img "Golden Knight" [ref=e214]
+                - generic [ref=e215]: "12"
+              - generic "Bowler (lvl 13)" [ref=e216]:
+                - img "Bowler" [ref=e217]
+                - generic [ref=e218]: "13"
+              - generic "Witch (lvl 12)" [ref=e219]:
+                - img "Witch" [ref=e220]
+                - generic [ref=e221]: "12"
+              - generic "Goblin Barrel (lvl 12)" [ref=e222]:
+                - img "Goblin Barrel" [ref=e223]
+                - generic [ref=e224]: "12"
+              - generic "P.E.K.K.A (lvl 10)" [ref=e225]:
+                - img "P.E.K.K.A" [ref=e226]
+                - generic [ref=e227]: "10"
+              - generic "Wizard (lvl 11)" [ref=e228]:
+                - img "Wizard" [ref=e229]
+                - generic [ref=e230]: "11"
+              - generic "Mega Knight (lvl 11)" [ref=e231]:
+                - img "Mega Knight" [ref=e232]
+                - generic [ref=e233]: "11"
+              - generic "Tower Princess (lvl 12)" [ref=e235]:
+                - img "Tower Princess" [ref=e236]
+                - generic [ref=e237]: "12"
+          - paragraph [ref=e238]:
+            - text: "This deck vs a fair spread of 200 common decks:"
+            - generic [ref=e239]: 25%
+            - text: bad or worse (
+            - generic [ref=e240]: 3%
+            - text: clearly bad)
+        - generic [ref=e242]:
+          - generic [ref=e243]:
+            - heading "BATTLE AUDIT - MATCHUP BY MATCHUP" [level=2] [ref=e244]
+            - generic [ref=e245]: 31 battles on file
+          - paragraph [ref=e246]: Each row shows the result, opponent, pure deck-vs-deck win chance, and matchup label. Expand a row to see why the deck was favored, even, or in trouble.
+          - generic [ref=e247]:
+            - button "loss 0-1 Trophy Road vs Alex¦¥ Win chance 37% BAD MATCHUP v Goblin BarrelvsHog Rider-2026-06-22 05:44-Hard drawbecauseGoblin Barrel into Hog Rider projects 37% win chance" [active] [ref=e249]:
+              - generic [ref=e250]:
+                - generic [ref=e251]: loss 0-1
+                - generic [ref=e252]: Trophy Road
+                - generic [ref=e253]: vs Alex¦¥
+                - generic [ref=e254]:
+                  - generic [ref=e255]: Win chance
+                  - text: 37%
+                - generic [ref=e256]: BAD MATCHUP
+                - generic [ref=e257]: v
+              - generic [ref=e258]: Goblin BarrelvsHog Rider-2026-06-22 05:44-Hard drawbecauseGoblin Barrel into Hog Rider projects 37% win chance
+            - button "loss 0-1 Trophy Road vs chokodetos Win chance 47% EVEN v Goblin BarrelvsGoblin Barrel-2026-06-22 05:40-Close drawbecausetheir Skeleton Army shuts down your P.E.K.K.A" [ref=e260]:
+              - generic [ref=e261]:
+                - generic [ref=e262]: loss 0-1
+                - generic [ref=e263]: Trophy Road
+                - generic [ref=e264]: vs chokodetos
+                - generic [ref=e265]:
+                  - generic [ref=e266]: Win chance
+                  - text: 47%
+                - generic [ref=e267]: EVEN
+                - generic [ref=e268]: v
+              - generic [ref=e269]: Goblin BarrelvsGoblin Barrel-2026-06-22 05:40-Close drawbecausetheir Skeleton Army shuts down your P.E.K.K.A
+            - button "loss 0-1 Trophy Road vs matias AFTER 3W Win chance 52% EVEN v Goblin BarrelvsBalloon-2026-06-22 05:37-Close drawbecauseyour Executioner shuts down their Balloon" [ref=e271]:
+              - generic [ref=e272]:
+                - generic [ref=e273]: loss 0-1
+                - generic [ref=e274]: Trophy Road
+                - generic [ref=e275]: vs matias
+                - generic [ref=e277]: AFTER 3W
+                - generic [ref=e278]:
+                  - generic [ref=e279]: Win chance
+                  - text: 52%
+                - generic [ref=e280]: EVEN
+                - generic [ref=e281]: v
+              - generic [ref=e282]: Goblin BarrelvsBalloon-2026-06-22 05:37-Close drawbecauseyour Executioner shuts down their Balloon
+            - button "win 1-0 Trophy Road vs nrube Win chance 46% EVEN v Goblin BarrelvsHog Rider-2026-06-22 05:32-Close drawbecausethe fallback shell prior leans against this pairing" [ref=e284]:
+              - generic [ref=e285]:
+                - generic [ref=e286]: win 1-0
+                - generic [ref=e287]: Trophy Road
+                - generic [ref=e288]: vs nrube
+                - generic [ref=e289]:
+                  - generic [ref=e290]: Win chance
+                  - text: 46%
+                - generic [ref=e291]: EVEN
+                - generic [ref=e292]: v
+              - generic [ref=e293]: Goblin BarrelvsHog Rider-2026-06-22 05:32-Close drawbecausethe fallback shell prior leans against this pairing
+            - button "win 1-0 Trophy Road vs babis_02 Win chance 44% BAD MATCHUP v Goblin BarrelvsGoblin Barrel + Cycle-2026-06-22 05:27-Hard drawbecauseGoblin Barrel into Goblin Barrel + Cycle projects 44% win chance" [ref=e295]:
+              - generic [ref=e296]:
+                - generic [ref=e297]: win 1-0
+                - generic [ref=e298]: Trophy Road
+                - generic [ref=e299]: vs babis_02
+                - generic [ref=e300]:
+                  - generic [ref=e301]: Win chance
+                  - text: 44%
+                - generic [ref=e302]: BAD MATCHUP
+                - generic [ref=e303]: v
+              - generic [ref=e304]: Goblin BarrelvsGoblin Barrel + Cycle-2026-06-22 05:27-Hard drawbecauseGoblin Barrel into Goblin Barrel + Cycle projects 44% win chance
+            - button "win 1-0 Trophy Road vs cruella Win chance 67% FAVORED v Goblin BarrelvsRoyal Hogs-2026-06-22 05:23-Good drawbecauseGoblin Barrel into Royal Hogs projects 67% win chance" [ref=e306]:
+              - generic [ref=e307]:
+                - generic [ref=e308]: win 1-0
+                - generic [ref=e309]: Trophy Road
+                - generic [ref=e310]: vs cruella
+                - generic [ref=e311]:
+                  - generic [ref=e312]: Win chance
+                  - text: 67%
+                - generic [ref=e313]: FAVORED
+                - generic [ref=e314]: v
+              - generic [ref=e315]: Goblin BarrelvsRoyal Hogs-2026-06-22 05:23-Good drawbecauseGoblin Barrel into Royal Hogs projects 67% win chance
+            - button "loss 0-1 Trophy Road vs ell_xls Win chance 46% EVEN v Goblin BarrelvsHog Rider-2026-06-22 05:19-Close drawbecauseGoblin Barrel into Hog Rider projects 46% win chance" [ref=e317]:
+              - generic [ref=e318]:
+                - generic [ref=e319]: loss 0-1
+                - generic [ref=e320]: Trophy Road
+                - generic [ref=e321]: vs ell_xls
+                - generic [ref=e322]:
+                  - generic [ref=e323]: Win chance
+                  - text: 46%
+                - generic [ref=e324]: EVEN
+                - generic [ref=e325]: v
+              - generic [ref=e326]: Goblin BarrelvsHog Rider-2026-06-22 05:19-Close drawbecauseGoblin Barrel into Hog Rider projects 46% win chance
+            - button "win 2-1 Trophy Road vs Alaa Win chance 44% BAD MATCHUP v Goblin BarrelvsGoblin Barrel + Cycle-2026-06-22 05:15-Hard drawbecausethe fallback shell prior leans toward this pairing" [ref=e328]:
+              - generic [ref=e329]:
+                - generic [ref=e330]: win 2-1
+                - generic [ref=e331]: Trophy Road
+                - generic [ref=e332]: vs Alaa
+                - generic [ref=e333]:
+                  - generic [ref=e334]: Win chance
+                  - text: 44%
+                - generic [ref=e335]: BAD MATCHUP
+                - generic [ref=e336]: v
+              - generic [ref=e337]: Goblin BarrelvsGoblin Barrel + Cycle-2026-06-22 05:15-Hard drawbecausethe fallback shell prior leans toward this pairing
+            - button "loss 0-1 Trophy Road vs Randy Win chance 23% BAD MATCHUP v Goblin BarrelvsGoblin Barrel-2026-06-22 02:37-Hard drawbecauseGoblin Barrel into Goblin Barrel projects 23% win chance" [ref=e339]:
+              - generic [ref=e340]:
+                - generic [ref=e341]: loss 0-1
+                - generic [ref=e342]: Trophy Road
+                - generic [ref=e343]: vs Randy
+                - generic [ref=e344]:
+                  - generic [ref=e345]: Win chance
+                  - text: 23%
+                - generic [ref=e346]: BAD MATCHUP
+                - generic [ref=e347]: v
+              - generic [ref=e348]: Goblin BarrelvsGoblin Barrel-2026-06-22 02:37-Hard drawbecauseGoblin Barrel into Goblin Barrel projects 23% win chance
+            - button "loss 0-1 Trophy Road vs eren jeager Win chance 53% EVEN v Goblin BarrelvsPressure:mega Knight-2026-06-22 02:34-Close drawbecauseGoblin Barrel into Pressure:mega Knight projects 53% win chance" [ref=e350]:
+              - generic [ref=e351]:
+                - generic [ref=e352]: loss 0-1
+                - generic [ref=e353]: Trophy Road
+                - generic [ref=e354]: vs eren jeager
+                - generic [ref=e355]:
+                  - generic [ref=e356]: Win chance
+                  - text: 53%
+                - generic [ref=e357]: EVEN
+                - generic [ref=e358]: v
+              - generic [ref=e359]: Goblin BarrelvsPressure:mega Knight-2026-06-22 02:34-Close drawbecauseGoblin Barrel into Pressure:mega Knight projects 53% win chance
+            - button "loss 0-3 Trophy Road vs daddy's revenge Win chance 44% BAD MATCHUP v Goblin BarrelvsPressure:mega Knight-2026-06-22 02:27-Hard drawbecauseGoblin Barrel into Pressure:mega Knight projects 44% win chance" [ref=e361]:
+              - generic [ref=e362]:
+                - generic [ref=e363]: loss 0-3
+                - generic [ref=e364]: Trophy Road
+                - generic [ref=e365]: vs daddy's revenge
+                - generic [ref=e366]:
+                  - generic [ref=e367]: Win chance
+                  - text: 44%
+                - generic [ref=e368]: BAD MATCHUP
+                - generic [ref=e369]: v
+              - generic [ref=e370]: Goblin BarrelvsPressure:mega Knight-2026-06-22 02:27-Hard drawbecauseGoblin Barrel into Pressure:mega Knight projects 44% win chance
+            - button "loss 0-2 Trophy Road vs FELIX. AFTER 6W Win chance 58% FAVORED v Goblin BarrelvsElixir Golem-2026-06-22 02:24-Good drawbecauseGoblin Barrel into Elixir Golem projects 58% win chance" [ref=e372]:
+              - generic [ref=e373]:
+                - generic [ref=e374]: loss 0-2
+                - generic [ref=e375]: Trophy Road
+                - generic [ref=e376]: vs FELIX.
+                - generic [ref=e378]: AFTER 6W
+                - generic [ref=e379]:
+                  - generic [ref=e380]: Win chance
+                  - text: 58%
+                - generic [ref=e381]: FAVORED
+                - generic [ref=e382]: v
+              - generic [ref=e383]: Goblin BarrelvsElixir Golem-2026-06-22 02:24-Good drawbecauseGoblin Barrel into Elixir Golem projects 58% win chance
+            - button "win 1-0 Trophy Road vs 亗 DEATH 亗 AFTER 5W Win chance 36% BAD MATCHUP v Goblin BarrelvsPressure:mega Knight-2026-06-22 02:18-Hard drawbecauseGoblin Barrel into Pressure:mega Knight projects 36% win chance" [ref=e385]:
+              - generic [ref=e386]:
+                - generic [ref=e387]: win 1-0
+                - generic [ref=e388]: Trophy Road
+                - generic [ref=e389]: vs 亗 DEATH 亗
+                - generic [ref=e391]: AFTER 5W
+                - generic [ref=e392]:
+                  - generic [ref=e393]: Win chance
+                  - text: 36%
+                - generic [ref=e394]: BAD MATCHUP
+                - generic [ref=e395]: v
+              - generic [ref=e396]: Goblin BarrelvsPressure:mega Knight-2026-06-22 02:18-Hard drawbecauseGoblin Barrel into Pressure:mega Knight projects 36% win chance
+            - button "win 1-0 Trophy Road vs chamoy AFTER 4W Win chance 45% EVEN v Goblin BarrelvsPressure:mega Knight-2026-06-22 02:13-Close drawbecausetheir Electro Wizard shuts down your P.E.K.K.A" [ref=e398]:
+              - generic [ref=e399]:
+                - generic [ref=e400]: win 1-0
+                - generic [ref=e401]: Trophy Road
+                - generic [ref=e402]: vs chamoy
+                - generic [ref=e404]: AFTER 4W
+                - generic [ref=e405]:
+                  - generic [ref=e406]: Win chance
+                  - text: 45%
+                - generic [ref=e407]: EVEN
+                - generic [ref=e408]: v
+              - generic [ref=e409]: Goblin BarrelvsPressure:mega Knight-2026-06-22 02:13-Close drawbecausetheir Electro Wizard shuts down your P.E.K.K.A
+            - button "win 1-0 Trophy Road vs jsjsj AFTER 3W Win chance 61% FAVORED v Goblin BarrelvsRoyal Hogs + Tank-2026-06-22 02:09-Good drawbecauseGoblin Barrel into Royal Hogs + Tank projects 61% win chance" [ref=e411]:
+              - generic [ref=e412]:
+                - generic [ref=e413]: win 1-0
+                - generic [ref=e414]: Trophy Road
+                - generic [ref=e415]: vs jsjsj
+                - generic [ref=e417]: AFTER 3W
+                - generic [ref=e418]:
+                  - generic [ref=e419]: Win chance
+                  - text: 61%
+                - generic [ref=e420]: FAVORED
+                - generic [ref=e421]: v
+              - generic [ref=e422]: Goblin BarrelvsRoyal Hogs + Tank-2026-06-22 02:09-Good drawbecauseGoblin Barrel into Royal Hogs + Tank projects 61% win chance
+            - button "win 3-0 Trophy Road vs Sidney Win chance 68% FAVORED v Goblin BarrelvsHog Rider-2026-06-22 02:06-Good drawbecauseGoblin Barrel into Hog Rider projects 68% win chance" [ref=e424]:
+              - generic [ref=e425]:
+                - generic [ref=e426]: win 3-0
+                - generic [ref=e427]: Trophy Road
+                - generic [ref=e428]: vs Sidney
+                - generic [ref=e429]:
+                  - generic [ref=e430]: Win chance
+                  - text: 68%
+                - generic [ref=e431]: FAVORED
+                - generic [ref=e432]: v
+              - generic [ref=e433]: Goblin BarrelvsHog Rider-2026-06-22 02:06-Good drawbecauseGoblin Barrel into Hog Rider projects 68% win chance
+            - button "win 2-1 Trophy Road vs char40hands Win chance 49% EVEN v Goblin BarrelvsGoblin Barrel + Air-2026-06-22 02:03-Close drawbecausetheir Lava Hound shuts down your Bowler" [ref=e435]:
+              - generic [ref=e436]:
+                - generic [ref=e437]: win 2-1
+                - generic [ref=e438]: Trophy Road
+                - generic [ref=e439]: vs char40hands
+                - generic [ref=e440]:
+                  - generic [ref=e441]: Win chance
+                  - text: 49%
+                - generic [ref=e442]: EVEN
+                - generic [ref=e443]: v
+              - generic [ref=e444]: Goblin BarrelvsGoblin Barrel + Air-2026-06-22 02:03-Close drawbecausetheir Lava Hound shuts down your Bowler
+            - button "win 1-0 Trophy Road vs mano tibas Win chance 63% FAVORED v Goblin BarrelvsCycle shell-2026-06-22 01:58-Good drawbecauseGoblin Barrel into Cycle shell projects 63% win chance" [ref=e446]:
+              - generic [ref=e447]:
+                - generic [ref=e448]: win 1-0
+                - generic [ref=e449]: Trophy Road
+                - generic [ref=e450]: vs mano tibas
+                - generic [ref=e451]:
+                  - generic [ref=e452]: Win chance
+                  - text: 63%
+                - generic [ref=e453]: FAVORED
+                - generic [ref=e454]: v
+              - generic [ref=e455]: Goblin BarrelvsCycle shell-2026-06-22 01:58-Good drawbecauseGoblin Barrel into Cycle shell projects 63% win chance
+            - button "loss 0-1 Trophy Road vs Peter Win chance 35% BAD MATCHUP v Goblin BarrelvsPressure:mega Knight-2026-06-22 01:52-Hard drawbecauseGoblin Barrel into Pressure:mega Knight projects 35% win chance" [ref=e457]:
+              - generic [ref=e458]:
+                - generic [ref=e459]: loss 0-1
+                - generic [ref=e460]: Trophy Road
+                - generic [ref=e461]: vs Peter
+                - generic [ref=e462]:
+                  - generic [ref=e463]: Win chance
+                  - text: 35%
+                - generic [ref=e464]: BAD MATCHUP
+                - generic [ref=e465]: v
+              - generic [ref=e466]: Goblin BarrelvsPressure:mega Knight-2026-06-22 01:52-Hard drawbecauseGoblin Barrel into Pressure:mega Knight projects 35% win chance
+            - button "loss 0-1 Trophy Road vs MATEO190 Win chance 26% BAD MATCHUP v Goblin BarrelvsGoblin Barrel-2026-06-22 01:47-Hard drawbecauseGoblin Barrel into Goblin Barrel projects 26% win chance" [ref=e468]:
+              - generic [ref=e469]:
+                - generic [ref=e470]: loss 0-1
+                - generic [ref=e471]: Trophy Road
+                - generic [ref=e472]: vs MATEO190
+                - generic [ref=e473]:
+                  - generic [ref=e474]: Win chance
+                  - text: 26%
+                - generic [ref=e475]: BAD MATCHUP
+                - generic [ref=e476]: v
+              - generic [ref=e477]: Goblin BarrelvsGoblin Barrel-2026-06-22 01:47-Hard drawbecauseGoblin Barrel into Goblin Barrel projects 26% win chance
+            - button "loss 0-1 Trophy Road vs menor jf Win chance 40% BAD MATCHUP v Goblin BarrelvsHog Rider-2026-06-22 01:44-Hard drawbecauseGoblin Barrel into Hog Rider projects 40% win chance" [ref=e479]:
+              - generic [ref=e480]:
+                - generic [ref=e481]: loss 0-1
+                - generic [ref=e482]: Trophy Road
+                - generic [ref=e483]: vs menor jf
+                - generic [ref=e484]:
+                  - generic [ref=e485]: Win chance
+                  - text: 40%
+                - generic [ref=e486]: BAD MATCHUP
+                - generic [ref=e487]: v
+              - generic [ref=e488]: Goblin BarrelvsHog Rider-2026-06-22 01:44-Hard drawbecauseGoblin Barrel into Hog Rider projects 40% win chance
+            - button "loss 0-1 Trophy Road vs Benxz AFTER 6W Win chance 42% BAD MATCHUP v Goblin BarrelvsHog Rider-2026-06-22 01:39-Hard drawbecauseGoblin Barrel into Hog Rider projects 42% win chance" [ref=e490]:
+              - generic [ref=e491]:
+                - generic [ref=e492]: loss 0-1
+                - generic [ref=e493]: Trophy Road
+                - generic [ref=e494]: vs Benxz
+                - generic [ref=e496]: AFTER 6W
+                - generic [ref=e497]:
+                  - generic [ref=e498]: Win chance
+                  - text: 42%
+                - generic [ref=e499]: BAD MATCHUP
+                - generic [ref=e500]: v
+              - generic [ref=e501]: Goblin BarrelvsHog Rider-2026-06-22 01:39-Hard drawbecauseGoblin Barrel into Hog Rider projects 42% win chance
+            - button "win 1-0 Trophy Road vs rei AFTER 5W Win chance 34% BAD MATCHUP v Goblin BarrelvsControl shell-2026-06-22 01:12-Hard drawbecauseGoblin Barrel into Control shell projects 34% win chance" [ref=e503]:
+              - generic [ref=e504]:
+                - generic [ref=e505]: win 1-0
+                - generic [ref=e506]: Trophy Road
+                - generic [ref=e507]: vs rei
+                - generic [ref=e509]: AFTER 5W
+                - generic [ref=e510]:
+                  - generic [ref=e511]: Win chance
+                  - text: 34%
+                - generic [ref=e512]: BAD MATCHUP
+                - generic [ref=e513]: v
+              - generic [ref=e514]: Goblin BarrelvsControl shell-2026-06-22 01:12-Hard drawbecauseGoblin Barrel into Control shell projects 34% win chance
+            - button "win 3-0 Trophy Road vs David AFTER 4W Win chance 43% BAD MATCHUP v Goblin BarrelvsGoblin Barrel-2026-06-22 01:07-Hard drawbecauseGoblin Barrel into Goblin Barrel projects 43% win chance" [ref=e516]:
+              - generic [ref=e517]:
+                - generic [ref=e518]: win 3-0
+                - generic [ref=e519]: Trophy Road
+                - generic [ref=e520]: vs David
+                - generic [ref=e522]: AFTER 4W
+                - generic [ref=e523]:
+                  - generic [ref=e524]: Win chance
+                  - text: 43%
+                - generic [ref=e525]: BAD MATCHUP
+                - generic [ref=e526]: v
+              - generic [ref=e527]: Goblin BarrelvsGoblin Barrel-2026-06-22 01:07-Hard drawbecauseGoblin Barrel into Goblin Barrel projects 43% win chance
+            - button "win 1-0 Trophy Road vs Kry$tal AFTER 3W Win chance 30% BAD MATCHUP v Goblin BarrelvsGoblin Barrel-2026-06-22 01:04-Hard drawbecauseGoblin Barrel into Goblin Barrel projects 30% win chance" [ref=e529]:
+              - generic [ref=e530]:
+                - generic [ref=e531]: win 1-0
+                - generic [ref=e532]: Trophy Road
+                - generic [ref=e533]: vs Kry$tal
+                - generic [ref=e535]: AFTER 3W
+                - generic [ref=e536]:
+                  - generic [ref=e537]: Win chance
+                  - text: 30%
+                - generic [ref=e538]: BAD MATCHUP
+                - generic [ref=e539]: v
+              - generic [ref=e540]: Goblin BarrelvsGoblin Barrel-2026-06-22 01:04-Hard drawbecauseGoblin Barrel into Goblin Barrel projects 30% win chance
+          - navigation "Battle pages" [ref=e541]:
+            - button "‹ PREV" [disabled] [ref=e542]
+            - generic [ref=e543]: 1-25 of 31/page 1 of 2
+            - button "NEXT ›" [ref=e544]
+    - generic [ref=e545]:
+      - button "SHARE THE EVIDENCE" [ref=e546]
+      - link "INVESTIGATE ANOTHER TAG" [ref=e547] [cursor=pointer]:
+        - /url: /
+      - link "VIEW PUBLIC BOARD" [ref=e548] [cursor=pointer]:
+        - /url: /players
+  - contentinfo [ref=e18]:
+    - paragraph [ref=e19]: Not affiliated with, endorsed by, or investigated by Supercell. The game is probably not actually rigged. Probably.
+    - paragraph [ref=e20]:
+      - link "Public methodology" [ref=e21] [cursor=pointer]:
+        - /url: /methodology
+      - text: "|"
+      - link "Public player board" [ref=e22] [cursor=pointer]:
+        - /url: /players
+      - text: "|"
+      - link "Top decks" [ref=e23] [cursor=pointer]:
+        - /url: /decks
+      - text: "|"
+      - link "Public correlations" [ref=e24] [cursor=pointer]:
+        - /url: /correlations
+      - text: "| Fan content under the"
+      - link "Supercell Fan Content Policy" [ref=e25] [cursor=pointer]:
+        - /url: https://supercell.com/en/fan-content-policy/
+      - text: .

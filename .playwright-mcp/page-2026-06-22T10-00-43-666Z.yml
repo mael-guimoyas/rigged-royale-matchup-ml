@@ -1,0 +1,40 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - generic [ref=e4]:
+      - link "Rigged Royale Home" [ref=e5] [cursor=pointer]:
+        - /url: /
+        - text: Rigged Royale
+      - navigation "Main navigation" [ref=e6]:
+        - link "Analyze" [ref=e7] [cursor=pointer]:
+          - /url: /
+        - link "Players" [ref=e8] [cursor=pointer]:
+          - /url: /players
+        - link "Decks" [ref=e9] [cursor=pointer]:
+          - /url: /decks
+        - link "Correlations" [ref=e10] [cursor=pointer]:
+          - /url: /correlations
+        - link "Methodology" [ref=e11] [cursor=pointer]:
+          - /url: /methodology
+  - main [ref=e13]:
+    - generic [ref=e14]: FILE SEALED
+    - paragraph [ref=e15]: That's not a player tag, that's a cry for help. Tags only use 0 2 8 9 P Y L Q G R J C U V.
+    - link "BACK TO THE CASE DESK" [ref=e16] [cursor=pointer]:
+      - /url: /
+  - contentinfo [ref=e17]:
+    - paragraph [ref=e18]: Not affiliated with, endorsed by, or investigated by Supercell. The game is probably not actually rigged. Probably.
+    - paragraph [ref=e19]:
+      - link "Public methodology" [ref=e20] [cursor=pointer]:
+        - /url: /methodology
+      - text: "|"
+      - link "Public player board" [ref=e21] [cursor=pointer]:
+        - /url: /players
+      - text: "|"
+      - link "Top decks" [ref=e22] [cursor=pointer]:
+        - /url: /decks
+      - text: "|"
+      - link "Public correlations" [ref=e23] [cursor=pointer]:
+        - /url: /correlations
+      - text: "| Fan content under the"
+      - link "Supercell Fan Content Policy" [ref=e24] [cursor=pointer]:
+        - /url: https://supercell.com/en/fan-content-policy/
+      - text: .

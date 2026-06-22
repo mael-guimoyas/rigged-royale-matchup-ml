@@ -1,0 +1,392 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - generic [ref=e4]:
+      - link "Rigged Royale Home" [ref=e5] [cursor=pointer]:
+        - /url: /
+        - text: Rigged Royale
+      - navigation "Main navigation" [ref=e6]:
+        - link "Analyze" [ref=e7] [cursor=pointer]:
+          - /url: /
+        - link "Players" [ref=e8] [cursor=pointer]:
+          - /url: /players
+        - link "Decks" [ref=e9] [cursor=pointer]:
+          - /url: /decks
+        - link "Correlations" [ref=e10] [cursor=pointer]:
+          - /url: /correlations
+        - link "Methodology" [ref=e11] [cursor=pointer]:
+          - /url: /methodology
+  - main [ref=e13]:
+    - generic [ref=e14]:
+      - generic [ref=e15]:
+        - generic [ref=e16]:
+          - paragraph [ref=e17]: PUBLIC CASE BOARD
+          - heading "WHO GOT THE WORST DEAL?" [level=1] [ref=e18]
+        - generic [ref=e19]:
+          - button "SCAN A RANDOM SUSPECT" [ref=e21]
+          - link "FAIR PLAYER" [ref=e22] [cursor=pointer]:
+            - /url: /player/AVERAGE
+          - link "AVERAGE PLAYER" [ref=e23] [cursor=pointer]:
+            - /url: /player/DBAVERAGE
+          - link "CORRELATIONS" [ref=e24] [cursor=pointer]:
+            - /url: /correlations
+          - link "TOP DECKS" [ref=e25] [cursor=pointer]:
+            - /url: /decks
+          - link "CASE DESK" [ref=e26] [cursor=pointer]:
+            - /url: /
+      - paragraph [ref=e27]: 104976 public players analyzed. Rankings use each player's ranked/ladder verdict and require at least 8 usable 1v1 battles. Reopening a case merges unseen ranked/ladder battles into its history; each report uses up to the newest 200.
+      - paragraph [ref=e28]: Database-backed - public players, ranked/ladder battles, and rigged-score snapshots are saved only after the evidence threshold.
+    - generic [ref=e30]:
+      - generic [ref=e31]:
+        - paragraph [ref=e32]: LOWEST SCORES
+        - heading "MOST RIGGED" [level=2] [ref=e33]
+        - list [ref=e34]:
+          - listitem [ref=e35]:
+            - 'link "01 GAITH 10 #220V8Y0UUP / 33 battles / high confidence 17 Certified Rigged" [ref=e36] [cursor=pointer]':
+              - /url: /player/%23220V8Y0UUP
+              - generic [ref=e37]: "01"
+              - generic [ref=e38]:
+                - generic [ref=e39]: GAITH 10
+                - generic [ref=e40]: "#220V8Y0UUP / 33 battles / high confidence"
+              - generic [ref=e41]:
+                - generic [ref=e42]: "17"
+                - generic [ref=e43]: Certified Rigged
+          - listitem [ref=e44]:
+            - 'link "02 D1G3sT1 #RUVLGUQ0C / 30 battles / high confidence 18 Certified Rigged" [ref=e45] [cursor=pointer]':
+              - /url: /player/%23RUVLGUQ0C
+              - generic [ref=e46]: "02"
+              - generic [ref=e47]:
+                - generic [ref=e48]: D1G3sT1
+                - generic [ref=e49]: "#RUVLGUQ0C / 30 battles / high confidence"
+              - generic [ref=e50]:
+                - generic [ref=e51]: "18"
+                - generic [ref=e52]: Certified Rigged
+          - listitem [ref=e53]:
+            - 'link "03 JIJIJA #RJJJULL8Q / 30 battles / high confidence 18 Certified Rigged" [ref=e54] [cursor=pointer]':
+              - /url: /player/%23RJJJULL8Q
+              - generic [ref=e55]: "03"
+              - generic [ref=e56]:
+                - generic [ref=e57]: JIJIJA
+                - generic [ref=e58]: "#RJJJULL8Q / 30 battles / high confidence"
+              - generic [ref=e59]:
+                - generic [ref=e60]: "18"
+                - generic [ref=e61]: Certified Rigged
+          - listitem [ref=e62]:
+            - 'link "04 squishy sack #UV2PYCULG / 30 battles / high confidence 18 Certified Rigged" [ref=e63] [cursor=pointer]':
+              - /url: /player/%23UV2PYCULG
+              - generic [ref=e64]: "04"
+              - generic [ref=e65]:
+                - generic [ref=e66]: squishy sack
+                - generic [ref=e67]: "#UV2PYCULG / 30 battles / high confidence"
+              - generic [ref=e68]:
+                - generic [ref=e69]: "18"
+                - generic [ref=e70]: Certified Rigged
+          - listitem [ref=e71]:
+            - 'link "05 SATAN #VLJYLG09Y / 30 battles / high confidence 18 Certified Rigged" [ref=e72] [cursor=pointer]':
+              - /url: /player/%23VLJYLG09Y
+              - generic [ref=e73]: "05"
+              - generic [ref=e74]:
+                - generic [ref=e75]: SATAN
+                - generic [ref=e76]: "#VLJYLG09Y / 30 battles / high confidence"
+              - generic [ref=e77]:
+                - generic [ref=e78]: "18"
+                - generic [ref=e79]: Certified Rigged
+          - listitem [ref=e80]:
+            - 'link "06 VOiDDwaRf #20PPLLPVCU / 26 battles / high confidence 18 Certified Rigged" [ref=e81] [cursor=pointer]':
+              - /url: /player/%2320PPLLPVCU
+              - generic [ref=e82]: "06"
+              - generic [ref=e83]:
+                - generic [ref=e84]: VOiDDwaRf
+                - generic [ref=e85]: "#20PPLLPVCU / 26 battles / high confidence"
+              - generic [ref=e86]:
+                - generic [ref=e87]: "18"
+                - generic [ref=e88]: Certified Rigged
+          - listitem [ref=e89]:
+            - 'link "07 Antonio #20RC9QV80Y / 30 battles / high confidence 19 Certified Rigged" [ref=e90] [cursor=pointer]':
+              - /url: /player/%2320RC9QV80Y
+              - generic [ref=e91]: "07"
+              - generic [ref=e92]:
+                - generic [ref=e93]: Antonio
+                - generic [ref=e94]: "#20RC9QV80Y / 30 battles / high confidence"
+              - generic [ref=e95]:
+                - generic [ref=e96]: "19"
+                - generic [ref=e97]: Certified Rigged
+          - listitem [ref=e98]:
+            - 'link "08 Fredinhooo #20P0QJPC8C / 30 battles / high confidence 19 Certified Rigged" [ref=e99] [cursor=pointer]':
+              - /url: /player/%2320P0QJPC8C
+              - generic [ref=e100]: "08"
+              - generic [ref=e101]:
+                - generic [ref=e102]: Fredinhooo
+                - generic [ref=e103]: "#20P0QJPC8C / 30 battles / high confidence"
+              - generic [ref=e104]:
+                - generic [ref=e105]: "19"
+                - generic [ref=e106]: Certified Rigged
+          - listitem [ref=e107]:
+            - 'link "09 stoned #VRJUGU80J / 30 battles / high confidence 19 Certified Rigged" [ref=e108] [cursor=pointer]':
+              - /url: /player/%23VRJUGU80J
+              - generic [ref=e109]: "09"
+              - generic [ref=e110]:
+                - generic [ref=e111]: stoned
+                - generic [ref=e112]: "#VRJUGU80J / 30 battles / high confidence"
+              - generic [ref=e113]:
+                - generic [ref=e114]: "19"
+                - generic [ref=e115]: Certified Rigged
+          - listitem [ref=e116]:
+            - 'link "10 jhoan2012 #20QV0RP9V9 / 30 battles / high confidence 19 Certified Rigged" [ref=e117] [cursor=pointer]':
+              - /url: /player/%2320QV0RP9V9
+              - generic [ref=e118]: "10"
+              - generic [ref=e119]:
+                - generic [ref=e120]: jhoan2012
+                - generic [ref=e121]: "#20QV0RP9V9 / 30 battles / high confidence"
+              - generic [ref=e122]:
+                - generic [ref=e123]: "19"
+                - generic [ref=e124]: Certified Rigged
+      - generic [ref=e125]:
+        - paragraph [ref=e126]: HIGHEST SCORES
+        - heading "LEAST RIGGED" [level=2] [ref=e127]
+        - list [ref=e128]:
+          - listitem [ref=e129]:
+            - 'link "01 xX-Bleu-Xx #2009PC29PQ / 31 battles / high confidence 82 Matchmaking''s Favorite Child" [ref=e130] [cursor=pointer]':
+              - /url: /player/%232009PC29PQ
+              - generic [ref=e131]: "01"
+              - generic [ref=e132]:
+                - generic [ref=e133]: xX-Bleu-Xx
+                - generic [ref=e134]: "#2009PC29PQ / 31 battles / high confidence"
+              - generic [ref=e135]:
+                - generic [ref=e136]: "82"
+                - generic [ref=e137]: Matchmaking's Favorite Child
+          - listitem [ref=e138]:
+            - 'link "02 Stephen .-. #2PJPLC9JV / 25 battles / high confidence 82 Matchmaking''s Favorite Child" [ref=e139] [cursor=pointer]':
+              - /url: /player/%232PJPLC9JV
+              - generic [ref=e140]: "02"
+              - generic [ref=e141]:
+                - generic [ref=e142]: Stephen .-.
+                - generic [ref=e143]: "#2PJPLC9JV / 25 battles / high confidence"
+              - generic [ref=e144]:
+                - generic [ref=e145]: "82"
+                - generic [ref=e146]: Matchmaking's Favorite Child
+          - listitem [ref=e147]:
+            - 'link "03 Thierry-567 #QP2JPP9P / 30 battles / high confidence 81 Matchmaking''s Favorite Child" [ref=e148] [cursor=pointer]':
+              - /url: /player/%23QP2JPP9P
+              - generic [ref=e149]: "03"
+              - generic [ref=e150]:
+                - generic [ref=e151]: Thierry-567
+                - generic [ref=e152]: "#QP2JPP9P / 30 battles / high confidence"
+              - generic [ref=e153]:
+                - generic [ref=e154]: "81"
+                - generic [ref=e155]: Matchmaking's Favorite Child
+          - listitem [ref=e156]:
+            - 'link "04 daniel.a #LGQG0Y88L / 30 battles / high confidence 80 Matchmaking''s Favorite Child" [ref=e157] [cursor=pointer]':
+              - /url: /player/%23LGQG0Y88L
+              - generic [ref=e158]: "04"
+              - generic [ref=e159]:
+                - generic [ref=e160]: daniel.a
+                - generic [ref=e161]: "#LGQG0Y88L / 30 battles / high confidence"
+              - generic [ref=e162]:
+                - generic [ref=e163]: "80"
+                - generic [ref=e164]: Matchmaking's Favorite Child
+          - listitem [ref=e165]:
+            - 'link "05 Klink #82U9JVYPL / 30 battles / high confidence 80 Matchmaking''s Favorite Child" [ref=e166] [cursor=pointer]':
+              - /url: /player/%2382U9JVYPL
+              - generic [ref=e167]: "05"
+              - generic [ref=e168]:
+                - generic [ref=e169]: Klink
+                - generic [ref=e170]: "#82U9JVYPL / 30 battles / high confidence"
+              - generic [ref=e171]:
+                - generic [ref=e172]: "80"
+                - generic [ref=e173]: Matchmaking's Favorite Child
+          - listitem [ref=e174]:
+            - 'link "06 ashur #2JV9QGR2Y / 30 battles / high confidence 80 Matchmaking''s Favorite Child" [ref=e175] [cursor=pointer]':
+              - /url: /player/%232JV9QGR2Y
+              - generic [ref=e176]: "06"
+              - generic [ref=e177]:
+                - generic [ref=e178]: ashur
+                - generic [ref=e179]: "#2JV9QGR2Y / 30 battles / high confidence"
+              - generic [ref=e180]:
+                - generic [ref=e181]: "80"
+                - generic [ref=e182]: Matchmaking's Favorite Child
+          - listitem [ref=e183]:
+            - 'link "07 fidel.gll #RQQCRQULV / 30 battles / high confidence 80 Matchmaking''s Favorite Child" [ref=e184] [cursor=pointer]':
+              - /url: /player/%23RQQCRQULV
+              - generic [ref=e185]: "07"
+              - generic [ref=e186]:
+                - generic [ref=e187]: fidel.gll
+                - generic [ref=e188]: "#RQQCRQULV / 30 battles / high confidence"
+              - generic [ref=e189]:
+                - generic [ref=e190]: "80"
+                - generic [ref=e191]: Matchmaking's Favorite Child
+          - listitem [ref=e192]:
+            - 'link "08 jaime ma femme #208R8J9GPC / 27 battles / high confidence 80 Matchmaking''s Favorite Child" [ref=e193] [cursor=pointer]':
+              - /url: /player/%23208R8J9GPC
+              - generic [ref=e194]: "08"
+              - generic [ref=e195]:
+                - generic [ref=e196]: jaime ma femme
+                - generic [ref=e197]: "#208R8J9GPC / 27 battles / high confidence"
+              - generic [ref=e198]:
+                - generic [ref=e199]: "80"
+                - generic [ref=e200]: Matchmaking's Favorite Child
+          - listitem [ref=e201]:
+            - 'link "09 Pavel #GYJPPV9VL / 20 battles / high confidence 80 Matchmaking''s Favorite Child" [ref=e202] [cursor=pointer]':
+              - /url: /player/%23GYJPPV9VL
+              - generic [ref=e203]: "09"
+              - generic [ref=e204]:
+                - generic [ref=e205]: Pavel
+                - generic [ref=e206]: "#GYJPPV9VL / 20 battles / high confidence"
+              - generic [ref=e207]:
+                - generic [ref=e208]: "80"
+                - generic [ref=e209]: Matchmaking's Favorite Child
+          - listitem [ref=e210]:
+            - 'link "10 3Mo0oR #9Q2Q90JG9 / 30 battles / high confidence 79 Matchmaking''s Favorite Child" [ref=e211] [cursor=pointer]':
+              - /url: /player/%239Q2Q90JG9
+              - generic [ref=e212]: "10"
+              - generic [ref=e213]:
+                - generic [ref=e214]: 3Mo0oR
+                - generic [ref=e215]: "#9Q2Q90JG9 / 30 battles / high confidence"
+              - generic [ref=e216]:
+                - generic [ref=e217]: "79"
+                - generic [ref=e218]: Matchmaking's Favorite Child
+    - generic [ref=e219]:
+      - generic [ref=e220]:
+        - generic [ref=e221]:
+          - paragraph [ref=e222]: LATEST FILES
+          - heading "RECENT ANALYSES" [level=2] [ref=e223]
+        - link "Read the scoring methodology" [ref=e224] [cursor=pointer]:
+          - /url: /methodology
+      - generic [ref=e225]:
+        - link "Polig 30 battles on file 54" [ref=e226] [cursor=pointer]:
+          - /url: /player/%23JLYQ0C9JG
+          - generic [ref=e227]:
+            - generic [ref=e228]: Polig
+            - generic [ref=e229]: 30 battles on file
+          - generic [ref=e230]: "54"
+        - link "андриа 30 battles on file 46" [ref=e231] [cursor=pointer]:
+          - /url: /player/%2320VVPVGU90
+          - generic [ref=e232]:
+            - generic [ref=e233]: андриа
+            - generic [ref=e234]: 30 battles on file
+          - generic [ref=e235]: "46"
+        - link "Backwoods 25 battles on file 57" [ref=e236] [cursor=pointer]:
+          - /url: /player/%23YGLG0GVJ
+          - generic [ref=e237]:
+            - generic [ref=e238]: Backwoods
+            - generic [ref=e239]: 25 battles on file
+          - generic [ref=e240]: "57"
+        - link "ferrnandinho 30 battles on file 37" [ref=e241] [cursor=pointer]:
+          - /url: /player/%23CVRL22U28
+          - generic [ref=e242]:
+            - generic [ref=e243]: ferrnandinho
+            - generic [ref=e244]: 30 battles on file
+          - generic [ref=e245]: "37"
+        - link "yctats 30 battles on file 68" [ref=e246] [cursor=pointer]:
+          - /url: /player/%239VQJLG8Q0
+          - generic [ref=e247]:
+            - generic [ref=e248]: yctats
+            - generic [ref=e249]: 30 battles on file
+          - generic [ref=e250]: "68"
+        - link "SAMET 30 battles on file 42" [ref=e251] [cursor=pointer]:
+          - /url: /player/%23JYVQ8922L
+          - generic [ref=e252]:
+            - generic [ref=e253]: SAMET
+            - generic [ref=e254]: 30 battles on file
+          - generic [ref=e255]: "42"
+        - link "DeputyRarez 14 battles on file 54" [ref=e256] [cursor=pointer]:
+          - /url: /player/%23P9Y9YY8LU
+          - generic [ref=e257]:
+            - generic [ref=e258]: DeputyRarez
+            - generic [ref=e259]: 14 battles on file
+          - generic [ref=e260]: "54"
+        - link "alex89 26 battles on file 42" [ref=e261] [cursor=pointer]:
+          - /url: /player/%23202J909PPU
+          - generic [ref=e262]:
+            - generic [ref=e263]: alex89
+            - generic [ref=e264]: 26 battles on file
+          - generic [ref=e265]: "42"
+        - link "cj 29 battles on file 39" [ref=e266] [cursor=pointer]:
+          - /url: /player/%23VPCYGPUL0
+          - generic [ref=e267]:
+            - generic [ref=e268]: cj
+            - generic [ref=e269]: 29 battles on file
+          - generic [ref=e270]: "39"
+        - link "vin 30 battles on file 51" [ref=e271] [cursor=pointer]:
+          - /url: /player/%2320P20V22U2
+          - generic [ref=e272]:
+            - generic [ref=e273]: vin
+            - generic [ref=e274]: 30 battles on file
+          - generic [ref=e275]: "51"
+        - link "°zombra° 30 battles on file 49" [ref=e276] [cursor=pointer]:
+          - /url: /player/%232208L0U9R2
+          - generic [ref=e277]:
+            - generic [ref=e278]: °zombra°
+            - generic [ref=e279]: 30 battles on file
+          - generic [ref=e280]: "49"
+        - link "kevin 30 battles on file 41" [ref=e281] [cursor=pointer]:
+          - /url: /player/%23V0C9JR0RJ
+          - generic [ref=e282]:
+            - generic [ref=e283]: kevin
+            - generic [ref=e284]: 30 battles on file
+          - generic [ref=e285]: "41"
+        - link "matas 21 battles on file 46" [ref=e286] [cursor=pointer]:
+          - /url: /player/%23GP9JY0YJP
+          - generic [ref=e287]:
+            - generic [ref=e288]: matas
+            - generic [ref=e289]: 21 battles on file
+          - generic [ref=e290]: "46"
+        - link "Nicolae 30 battles on file 20" [ref=e291] [cursor=pointer]:
+          - /url: /player/%239JY9RRG92
+          - generic [ref=e292]:
+            - generic [ref=e293]: Nicolae
+            - generic [ref=e294]: 30 battles on file
+          - generic [ref=e295]: "20"
+        - link "Milo 36 battles on file 33" [ref=e296] [cursor=pointer]:
+          - /url: /player/%23YYGV80V0V
+          - generic [ref=e297]:
+            - generic [ref=e298]: Milo
+            - generic [ref=e299]: 36 battles on file
+          - generic [ref=e300]: "33"
+        - link "ziellos 30 battles on file 55" [ref=e301] [cursor=pointer]:
+          - /url: /player/%2328JP2YRV
+          - generic [ref=e302]:
+            - generic [ref=e303]: ziellos
+            - generic [ref=e304]: 30 battles on file
+          - generic [ref=e305]: "55"
+        - link "Teirnos 23 battles on file 53" [ref=e306] [cursor=pointer]:
+          - /url: /player/%2388UV88Y2
+          - generic [ref=e307]:
+            - generic [ref=e308]: Teirnos
+            - generic [ref=e309]: 23 battles on file
+          - generic [ref=e310]: "53"
+        - link "Alex_Saliou 10 battles on file 55" [ref=e311] [cursor=pointer]:
+          - /url: /player/%23288LGYYV
+          - generic [ref=e312]:
+            - generic [ref=e313]: Alex_Saliou
+            - generic [ref=e314]: 10 battles on file
+          - generic [ref=e315]: "55"
+        - link "azra 16 battles on file 27" [ref=e316] [cursor=pointer]:
+          - /url: /player/%23RQGJC2GYY
+          - generic [ref=e317]:
+            - generic [ref=e318]: azra
+            - generic [ref=e319]: 16 battles on file
+          - generic [ref=e320]: "27"
+        - link "cheeroo26 25 battles on file 42" [ref=e321] [cursor=pointer]:
+          - /url: /player/%23VGGP89JJL
+          - generic [ref=e322]:
+            - generic [ref=e323]: cheeroo26
+            - generic [ref=e324]: 25 battles on file
+          - generic [ref=e325]: "42"
+  - contentinfo [ref=e326]:
+    - paragraph [ref=e327]: Not affiliated with, endorsed by, or investigated by Supercell. The game is probably not actually rigged. Probably.
+    - paragraph [ref=e328]:
+      - link "Public methodology" [ref=e329] [cursor=pointer]:
+        - /url: /methodology
+      - text: "|"
+      - link "Public player board" [ref=e330] [cursor=pointer]:
+        - /url: /players
+      - text: "|"
+      - link "Top decks" [ref=e331] [cursor=pointer]:
+        - /url: /decks
+      - text: "|"
+      - link "Public correlations" [ref=e332] [cursor=pointer]:
+        - /url: /correlations
+      - text: "| Fan content under the"
+      - link "Supercell Fan Content Policy" [ref=e333] [cursor=pointer]:
+        - /url: https://supercell.com/en/fan-content-policy/
+      - text: .
