@@ -28,6 +28,8 @@ model:
   dropout: 0.15
   max_evolution_level: 5
   max_hero_level: 5
+  # Highest real card elixir cost; sizes the per-card elixir embedding.
+  max_elixir: 9
   # Weight on the empirical matrix logit. 0.0 ignores the prior entirely (the
   # network learns from cards only). To actually USE an attached matrix prior,
   # run `attach-prior` then set matrix_prior_learnable: true (recommended) or a

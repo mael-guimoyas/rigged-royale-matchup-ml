@@ -57,7 +57,7 @@ def test_latest_patch_is_lexicographic_max() -> None:
 
 def test_request_to_row_spreads_evolution_ids_onto_positions() -> None:
     request = MatchupRequest(**WEB_PAYLOAD)
-    row = request_to_row(request, FAKE_VOCAB)
+    row = request_to_row(request, {"vocabulary": FAKE_VOCAB})
 
     assert row["team_card_ids"] == WEB_PAYLOAD["team_card_ids"]
     # Evolved-card ids become 1s at the matching deck positions, 0 elsewhere.
@@ -69,6 +69,28 @@ def test_request_to_row_spreads_evolution_ids_onto_positions() -> None:
     assert row["segment"] == "ladder:9000-11999"
     assert row["patch"] == "2026-06"
     assert row["matrix_prior"] == 0.5
+
+
+def test_request_to_row_reconstructs_champion_and_hero_roles() -> None:
+    # Golden Knight (26000074) is a champion id; 26000064 is sent as a hero form.
+    payload = {
+        **WEB_PAYLOAD,
+        "team_card_ids": [
+            26000074, 26000030, 26000021, 26000014, 27000006, 28000000, 28000011, 26000064,
+        ],
+        "team_evolution_card_ids": [],
+        "team_hero_card_ids": [26000064],
+    }
+    request = MatchupRequest(**payload)
+    row = request_to_row(request, {"vocabulary": FAKE_VOCAB})
+
+    # Champion class -> role 2 at the Golden Knight position.
+    assert row["team_card_roles"][0] == 2
+    # Hero form -> role 3 and hero level 1 at the hero card's position.
+    assert row["team_card_roles"][7] == 3
+    assert row["team_hero_levels"][7] == 1
+    # Everything else stays normal.
+    assert row["team_card_roles"][1:7] == [1] * 6
 
 
 def test_probability_to_label_three_class() -> None:

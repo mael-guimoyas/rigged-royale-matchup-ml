@@ -16,17 +16,35 @@ class DeckEncoder(nn.Module):
         hidden_dim: int,
         max_evolution_level: int,
         max_hero_level: int,
+        max_elixir: int,
         dropout: float,
     ) -> None:
         super().__init__()
         self.max_evolution_level = max_evolution_level
         self.max_hero_level = max_hero_level
+        self.max_elixir = max_elixir
         self.card_embedding = nn.Embedding(card_count, embedding_dim, padding_idx=0)
+        # Card-specific "this card, evolved/hero" identity shifts. A shared
+        # evolution/hero LEVEL embedding alone makes evolved-ness a single global
+        # direction, so the only way Evolved Knight differs from Evolved Firecracker
+        # is whatever the projection MLP can disentangle. These per-card deltas give
+        # each evolved/hero variant its own learnable identity, which flows into the
+        # pairwise card-interaction encoder -> genuinely new matchup interactions.
+        # Zero-initialised so the model starts identical to the level-only baseline
+        # and learns the deltas from win/loss.
+        self.evolved_card_embedding = nn.Embedding(card_count, embedding_dim, padding_idx=0)
+        self.hero_card_embedding = nn.Embedding(card_count, embedding_dim, padding_idx=0)
+        nn.init.zeros_(self.evolved_card_embedding.weight)
+        nn.init.zeros_(self.hero_card_embedding.weight)
         self.evolution_embedding = nn.Embedding(max_evolution_level + 1, embedding_dim // 4)
         self.hero_embedding = nn.Embedding(max_hero_level + 1, embedding_dim // 4)
         self.role_embedding = nn.Embedding(4, embedding_dim // 4, padding_idx=0)
+        # Elixir cost per card (0 = unknown/padding). Cycle vs beatdown is a
+        # dominant matchup axis the card id alone has to memorise; an explicit cost
+        # embedding also generalises to cards unseen in training.
+        self.elixir_embedding = nn.Embedding(max_elixir + 1, embedding_dim // 4, padding_idx=0)
         self.tower_embedding = nn.Embedding(tower_count, embedding_dim // 2, padding_idx=0)
-        card_input = embedding_dim + 3 * (embedding_dim // 4)
+        card_input = embedding_dim + 4 * (embedding_dim // 4)
         self.card_projection = nn.Sequential(
             nn.Linear(card_input, hidden_dim),
             nn.GELU(),
@@ -47,17 +65,30 @@ class DeckEncoder(nn.Module):
         heroes: torch.Tensor,
         roles: torch.Tensor,
         tower: torch.Tensor,
+        elixir: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         mask = cards.ne(0).unsqueeze(-1)
         evolutions = evolutions.clamp(0, self.max_evolution_level)
         heroes = heroes.clamp(0, self.max_hero_level)
         roles = roles.clamp(0, 3)
+        elixir = elixir.clamp(0, self.max_elixir)
+        # Shift the base card identity when this card is fielded in its evolved or
+        # hero form, gated by the per-position evo/hero flag. Zero-init keeps this a
+        # no-op until the deltas are learned.
+        evolved_gate = (evolutions > 0).unsqueeze(-1).to(self.card_embedding.weight.dtype)
+        hero_gate = (heroes > 0).unsqueeze(-1).to(self.card_embedding.weight.dtype)
+        card_identity = (
+            self.card_embedding(cards)
+            + evolved_gate * self.evolved_card_embedding(cards)
+            + hero_gate * self.hero_card_embedding(cards)
+        )
         card_features = torch.cat(
             [
-                self.card_embedding(cards),
+                card_identity,
                 self.evolution_embedding(evolutions),
                 self.hero_embedding(heroes),
                 self.role_embedding(roles),
+                self.elixir_embedding(elixir),
             ],
             dim=-1,
         )
@@ -75,8 +106,9 @@ class DeckEncoder(nn.Module):
         heroes: torch.Tensor,
         roles: torch.Tensor,
         tower: torch.Tensor,
+        elixir: torch.Tensor,
     ) -> torch.Tensor:
-        deck_features, _, _ = self.encode(cards, evolutions, heroes, roles, tower)
+        deck_features, _, _ = self.encode(cards, evolutions, heroes, roles, tower, elixir)
         return deck_features
 
 
@@ -192,6 +224,7 @@ class SymmetricMatchupModel(nn.Module):
         dropout: float = 0.15,
         max_evolution_level: int = 5,
         max_hero_level: int = 5,
+        max_elixir: int = 9,
         matrix_prior_strength: float = 1.0,
         use_cross_card_interactions: bool = False,
         use_intra_deck_synergies: bool = False,
@@ -227,6 +260,7 @@ class SymmetricMatchupModel(nn.Module):
             hidden_dim,
             max_evolution_level,
             max_hero_level,
+            max_elixir,
             dropout,
         )
         self.card_interactions = (
@@ -289,9 +323,10 @@ class SymmetricMatchupModel(nn.Module):
         evolutions: torch.Tensor,
         heroes: torch.Tensor,
         roles: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        elixir: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         if not self.training or self.card_dropout <= 0:
-            return cards, evolutions, heroes, roles
+            return cards, evolutions, heroes, roles, elixir
         active = cards.ne(0)
         dropped = torch.rand(cards.shape, device=cards.device) < self.card_dropout
         keep = active & ~dropped
@@ -304,6 +339,7 @@ class SymmetricMatchupModel(nn.Module):
             evolutions.masked_fill(~keep_or_padding, 0),
             heroes.masked_fill(~keep_or_padding, 0),
             roles.masked_fill(~keep_or_padding, 0),
+            elixir.masked_fill(~keep_or_padding, 0),
         )
 
     def _matchup_summary(
@@ -373,19 +409,27 @@ class SymmetricMatchupModel(nn.Module):
         return self.orientation_network(features).squeeze(-1)
 
     def forward(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
-        team_cards_input, team_evos, team_heroes, team_roles = self._apply_card_dropout(
-            batch["team_cards"],
-            batch["team_evos"],
-            batch["team_heroes"],
-            batch["team_roles"],
-        )
-        opponent_cards_input, opponent_evos, opponent_heroes, opponent_roles = (
+        team_cards_input, team_evos, team_heroes, team_roles, team_elixir = (
             self._apply_card_dropout(
-                batch["opponent_cards"],
-                batch["opponent_evos"],
-                batch["opponent_heroes"],
-                batch["opponent_roles"],
+                batch["team_cards"],
+                batch["team_evos"],
+                batch["team_heroes"],
+                batch["team_roles"],
+                batch["team_elixir"],
             )
+        )
+        (
+            opponent_cards_input,
+            opponent_evos,
+            opponent_heroes,
+            opponent_roles,
+            opponent_elixir,
+        ) = self._apply_card_dropout(
+            batch["opponent_cards"],
+            batch["opponent_evos"],
+            batch["opponent_heroes"],
+            batch["opponent_roles"],
+            batch["opponent_elixir"],
         )
         team, team_cards, team_mask = self.deck_encoder.encode(
             team_cards_input,
@@ -393,6 +437,7 @@ class SymmetricMatchupModel(nn.Module):
             team_heroes,
             team_roles,
             batch["team_tower"],
+            team_elixir,
         )
         opponent, opponent_cards, opponent_mask = self.deck_encoder.encode(
             opponent_cards_input,
@@ -400,6 +445,7 @@ class SymmetricMatchupModel(nn.Module):
             opponent_heroes,
             opponent_roles,
             batch["opponent_tower"],
+            opponent_elixir,
         )
         context = torch.cat(
             [self.segment_embedding(batch["segment"]), self.patch_embedding(batch["patch"])],
@@ -484,6 +530,7 @@ class SymmetricMatchupModel(nn.Module):
             batch["team_heroes"],
             batch["team_roles"],
             batch["team_tower"],
+            batch["team_elixir"],
         )
         _, opponent_cards, opponent_mask = self.deck_encoder.encode(
             batch["opponent_cards"],
@@ -491,6 +538,7 @@ class SymmetricMatchupModel(nn.Module):
             batch["opponent_heroes"],
             batch["opponent_roles"],
             batch["opponent_tower"],
+            batch["opponent_elixir"],
         )
         result: dict[str, torch.Tensor] = {}
         if self.use_cross_card_interactions:

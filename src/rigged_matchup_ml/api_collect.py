@@ -338,6 +338,13 @@ def _supabase_tags(limit: int) -> list[str]:
         raise RuntimeError("SUPABASE_DB_URL is missing; cannot seed tags from Supabase.")
     with psycopg.connect(database_url, row_factory=tuple_row) as connection:
         connection.execute("set default_transaction_read_only = on")
+        # The seed query has no `where tracked` filter, so it can't use the partial
+        # players_tracked_refresh index and instead does a full seq scan + top-N sort
+        # over all rows. On throttled Supabase compute that scan alone is ~20s, which
+        # blows the default role statement_timeout at large limits. Raise it for this
+        # read-only session. The real fix is a covering index on
+        # (last_analyzed_at desc nulls last) include (tag) -- see notes in README.
+        connection.execute("set statement_timeout = '300s'")
         rows = connection.execute(
             "select tag from public.players order by last_analyzed_at desc nulls last limit %s",
             (limit,),

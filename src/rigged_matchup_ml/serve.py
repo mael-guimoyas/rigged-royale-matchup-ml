@@ -21,10 +21,20 @@ from typing import Any
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
+from .card_stats import CHAMPION_CARD_IDS
+from .domain import ROLE_CHAMPION, ROLE_HERO, ROLE_NORMAL, Deck, segment_for
 from .predictor import load_bundle, predict_from_row
 
 DEFAULT_CHECKPOINT = "artifacts/matchup-model.pt"
 DEFAULT_MODEL_NAME = "symmetric-matchup"
+
+# Mirror config/default.yaml so the current checkpoint (which predates the
+# embedded ``data_config``) still resolves real segments. Newer checkpoints carry
+# their own ``data_config`` and override this (see ``_data_config``).
+DEFAULT_DATA_CONFIG = {
+    "trophy_buckets": [0, 5000, 7000, 9000, 12000, 99999],
+    "top_ladder_buckets": [100, 1000, 10000],
+}
 
 
 # --- request / response contract (mirrors the site's ml-inference.ts) ---------
@@ -39,8 +49,21 @@ class MatchupRequest(BaseModel):
     team_avg_card_level: float | None = None
     opponent_avg_card_level: float | None = None
     trophy_diff: int | None = 0
+    # Segmentation inputs (the site's player bracket). Without these the request
+    # cannot be placed in its trained segment and falls back to the mode default,
+    # so per-segment calibration never applies. ``team_trophies`` /
+    # ``team_global_rank`` drive the ladder bucket; ``league_number`` the ranked
+    # league. All optional for backward compatibility.
+    team_trophies: int | None = None
+    team_global_rank: int | None = None
+    league_number: int | None = None
     team_evolution_card_ids: list[int] = Field(default_factory=list)
     opponent_evolution_card_ids: list[int] = Field(default_factory=list)
+    # Cards fielded in their Hero form (March 2026 Hero slot) -- distinct from
+    # Champion class and from Evolution. Mirrors the evolution-ids pattern; without
+    # it the Hero form is invisible at inference even though training sees it.
+    team_hero_card_ids: list[int] = Field(default_factory=list)
+    opponent_hero_card_ids: list[int] = Field(default_factory=list)
     # Per-card counter / synergy attributions are only needed for the headline
     # matchup of each battle, not the expected-context or meta-panel requests, so
     # the caller opts in to avoid the extra attention pass on the high-fan-out
@@ -132,17 +155,84 @@ def latest_patch(vocabulary: dict[str, Any]) -> str:
     return max(patches) if patches else ""
 
 
-def request_to_row(request: MatchupRequest, vocabulary: dict[str, Any]) -> dict[str, Any]:
+def _data_config(bundle: dict[str, Any]) -> dict[str, Any]:
+    """Trophy / top-ladder bucket edges for segment resolution.
+
+    Prefers the buckets embedded in the checkpoint (newer trainings) and falls
+    back to the config/default.yaml values so checkpoints saved before the
+    embedded ``data_config`` still segment correctly.
+    """
+    return bundle.get("data_config") or DEFAULT_DATA_CONFIG
+
+
+def resolve_segment(
+    request: MatchupRequest, vocabulary: dict[str, Any], data_config: dict[str, Any]
+) -> str:
+    """Place the request in its trained segment from the site's bracket inputs.
+
+    Reuses the exact training-time rule (:func:`domain.segment_for`): ladder
+    splits by global rank then trophy bucket; ranked by league number. Falls back
+    to :func:`default_segment` when the request carries no bracket info OR the
+    resolved segment is not in the checkpoint vocabulary (an unknown segment has
+    no fitted calibration, so the representative default is safer).
+    """
+    mode = (request.mode_key or "").strip().lower()
+    has_bracket = (
+        request.team_trophies is not None
+        or request.team_global_rank is not None
+        or request.league_number is not None
+    )
+    if not has_bracket:
+        return default_segment(vocabulary, request.mode_key)
+
+    deck = Deck(
+        cards=(),
+        tower_troop_id=request.team_tower_troop_id or 0,
+        tag="",
+        crowns=0,
+        starting_trophies=request.team_trophies,
+        global_rank=request.team_global_rank,
+    )
+    raw = {"leagueNumber": request.league_number} if request.league_number else {}
+    segment = segment_for(deck, mode, data_config, raw)
+
+    segments = vocabulary.get("segments", {})
+    if segment in segments:
+        return segment
+    return default_segment(vocabulary, request.mode_key)
+
+
+def request_to_row(request: MatchupRequest, bundle: dict[str, Any]) -> dict[str, Any]:
     """Adapt the site's thin request into a full row for :func:`encode_row`.
 
-    Fields the site does not send are defaulted: hero levels 0, card roles 1
-    (normal), patch = latest, segment = mode default. Evolutions arrive as a list
-    of evolved card ids and are spread back onto the per-card-position arrays.
+    Evolution and Hero forms arrive as lists of card ids and are spread back onto
+    the per-card-position arrays. Card roles are reconstructed from the ids: the
+    Champion role from the static ``CHAMPION_CARD_IDS`` set (the site sends no card
+    rarity) and the Hero role from the hero-form ids. Elixir is derived from the
+    card ids inside :func:`encode_row`, so it needs no field here. The segment is
+    resolved from the request's bracket inputs (trophies / rank / league) and only
+    falls back to the mode default when those are absent.
     """
+    vocabulary = bundle["vocabulary"]
     team_cards = list(request.team_card_ids)
     opponent_cards = list(request.opponent_card_ids)
     team_evos = set(request.team_evolution_card_ids)
     opponent_evos = set(request.opponent_evolution_card_ids)
+    team_heroes = set(request.team_hero_card_ids)
+    opponent_heroes = set(request.opponent_hero_card_ids)
+
+    def roles_for(cards: list[int], hero_ids: set[int]) -> list[int]:
+        # Hero form takes precedence over Champion class when a card is both sent
+        # as a hero and is a champion id (should not normally overlap).
+        return [
+            ROLE_HERO
+            if card in hero_ids
+            else ROLE_CHAMPION
+            if card in CHAMPION_CARD_IDS
+            else ROLE_NORMAL
+            for card in cards
+        ]
+
     return {
         "team_card_ids": team_cards,
         "opponent_card_ids": opponent_cards,
@@ -150,20 +240,22 @@ def request_to_row(request: MatchupRequest, vocabulary: dict[str, Any]) -> dict[
         "opponent_evolution_levels": [
             1 if card in opponent_evos else 0 for card in opponent_cards
         ],
-        "team_hero_levels": [0] * 8,
-        "opponent_hero_levels": [0] * 8,
-        "team_card_roles": [1] * 8,
-        "opponent_card_roles": [1] * 8,
+        "team_hero_levels": [1 if card in team_heroes else 0 for card in team_cards],
+        "opponent_hero_levels": [
+            1 if card in opponent_heroes else 0 for card in opponent_cards
+        ],
+        "team_card_roles": roles_for(team_cards, team_heroes),
+        "opponent_card_roles": roles_for(opponent_cards, opponent_heroes),
         "team_tower_troop_id": request.team_tower_troop_id,
         "opponent_tower_troop_id": request.opponent_tower_troop_id,
-        "segment": default_segment(vocabulary, request.mode_key),
+        "segment": resolve_segment(request, vocabulary, _data_config(bundle)),
         "patch": latest_patch(vocabulary),
         "matrix_prior": 0.5,
     }
 
 
 def build_response(bundle: dict[str, Any], request: MatchupRequest) -> PredictionResponse:
-    row = request_to_row(request, bundle["vocabulary"])
+    row = request_to_row(request, bundle)
     result = predict_from_row(
         bundle, row, include_interactions=request.include_interactions
     )

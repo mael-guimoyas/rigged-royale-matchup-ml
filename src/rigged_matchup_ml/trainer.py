@@ -429,6 +429,12 @@ def train_model(config: AppConfig) -> Path:
             "segment_calibration_min_rows": int(
                 config.training.get("segment_calibration_min_rows", 2000)
             ),
+            # Bucket edges so the inference server can resolve a request's segment
+            # (domain.segment_for) without re-reading the training config.
+            "data_config": {
+                "trophy_buckets": list(config.data["trophy_buckets"]),
+                "top_ladder_buckets": list(config.data["top_ladder_buckets"]),
+            },
             "feature_version": 4,
         },
         checkpoint,

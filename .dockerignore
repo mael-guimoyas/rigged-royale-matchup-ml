@@ -1,0 +1,28 @@
+# Keep the build context small: only src + pyproject + the model checkpoint are
+# needed. Everything below is training-time data or local cruft.
+.git
+.gitignore
+.venv/
+**/__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Training data + intermediates (can be gigabytes).
+data/
+*.parquet
+*.sqlite3
+*.duckdb
+
+# Non-serving artifacts. The model checkpoint is COPYed explicitly in the
+# Dockerfile, so excluding the rest here does not block it.
+artifacts/*.json
+artifacts/unseen-test-matchups/
+artifacts/*.csv
+
+# Local dev / CI
+docker-compose.yml
+.github/
+*.ipynb

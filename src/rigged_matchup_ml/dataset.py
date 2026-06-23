@@ -9,6 +9,8 @@ import pyarrow.dataset as pads
 import torch
 from torch.utils.data import DataLoader, IterableDataset, get_worker_info
 
+from .card_stats import elixir_for
+
 
 FEATURE_COLUMNS = [
     "team_card_ids",
@@ -42,6 +44,12 @@ def encode_row(
         encoded = [vocab.get(str(value), 0) for value in values[:8]]
         return encoded + [0] * (8 - len(encoded))
 
+    def encode_elixir(values: list[int]) -> list[int]:
+        # Derived from the raw card ids (not the vocab index) so it needs no
+        # column in the Parquet shards; aligned position-wise with encode_cards.
+        costs = [elixir_for(value) for value in values[:8]]
+        return costs + [0] * (8 - len(costs))
+
     if swapped:
         team_prefix, opponent_prefix = "opponent", "team"
         win = not bool(row["win"])
@@ -56,6 +64,12 @@ def encode_row(
         ),
         "opponent_cards": torch.tensor(
             encode_cards(row[f"{opponent_prefix}_card_ids"]), dtype=torch.long
+        ),
+        "team_elixir": torch.tensor(
+            encode_elixir(row[f"{team_prefix}_card_ids"]), dtype=torch.long
+        ),
+        "opponent_elixir": torch.tensor(
+            encode_elixir(row[f"{opponent_prefix}_card_ids"]), dtype=torch.long
         ),
         "team_evos": torch.tensor(
             list(row[f"{team_prefix}_evolution_levels"][:8]), dtype=torch.long
@@ -114,6 +128,8 @@ def encode_rows(
 
     team_cards: list[list[int]] = []
     opponent_cards: list[list[int]] = []
+    team_elixir: list[list[int]] = []
+    opponent_elixir: list[list[int]] = []
     team_evos: list[list[int]] = []
     opponent_evos: list[list[int]] = []
     team_heroes: list[list[int]] = []
@@ -148,6 +164,12 @@ def encode_rows(
         opponent_cards.append(
             _encode_card_values(row[f"{opponent_prefix}_card_ids"], card_vocabulary)
         )
+        team_elixir.append(
+            _fixed_length([elixir_for(c) for c in row[f"{team_prefix}_card_ids"][:8]])
+        )
+        opponent_elixir.append(
+            _fixed_length([elixir_for(c) for c in row[f"{opponent_prefix}_card_ids"][:8]])
+        )
         team_evos.append(_fixed_length(row[f"{team_prefix}_evolution_levels"]))
         opponent_evos.append(_fixed_length(row[f"{opponent_prefix}_evolution_levels"]))
         team_heroes.append(_fixed_length(row[f"{team_prefix}_hero_levels"]))
@@ -168,6 +190,8 @@ def encode_rows(
     return {
         "team_cards": torch.tensor(team_cards, dtype=torch.long),
         "opponent_cards": torch.tensor(opponent_cards, dtype=torch.long),
+        "team_elixir": torch.tensor(team_elixir, dtype=torch.long),
+        "opponent_elixir": torch.tensor(opponent_elixir, dtype=torch.long),
         "team_evos": torch.tensor(team_evos, dtype=torch.long),
         "opponent_evos": torch.tensor(opponent_evos, dtype=torch.long),
         "team_heroes": torch.tensor(team_heroes, dtype=torch.long),
