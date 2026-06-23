@@ -61,6 +61,68 @@ def test_probability_is_antisymmetric() -> None:
     assert abs(probability + reverse_probability - 1.0) < 1e-6
 
 
+def _reverse(original: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    return {
+        **original,
+        "team_cards": original["opponent_cards"],
+        "opponent_cards": original["team_cards"],
+        "team_elixir": original["opponent_elixir"],
+        "opponent_elixir": original["team_elixir"],
+        "team_evos": original["opponent_evos"],
+        "opponent_evos": original["team_evos"],
+        "team_heroes": original["opponent_heroes"],
+        "opponent_heroes": original["team_heroes"],
+        "team_roles": original["opponent_roles"],
+        "opponent_roles": original["team_roles"],
+        "team_tower": original["opponent_tower"],
+        "opponent_tower": original["team_tower"],
+    }
+
+
+def test_multihead_cross_and_deck_transformer_stay_antisymmetric() -> None:
+    model = SymmetricMatchupModel(
+        32,
+        4,
+        3,
+        3,
+        dropout=0.0,
+        use_cross_card_interactions=True,
+        use_intra_deck_synergies=True,
+        use_matchup_transformer=True,
+        use_segment_adapters=True,
+        cross_heads=4,
+        use_deck_transformer=True,
+        deck_transformer_heads=4,
+        deck_transformer_layers=1,
+    )
+    model.eval()
+    original = batch()
+    with torch.no_grad():
+        probability = model.probability(original).item()
+        reverse_probability = model.probability(_reverse(original)).item()
+    assert abs(probability + reverse_probability - 1.0) < 1e-6
+
+
+def test_deck_transformer_archetype_changes_logits() -> None:
+    # The archetype path must actually feed the score (not be a dead branch).
+    plain = SymmetricMatchupModel(32, 4, 3, 3, dropout=0.0, use_deck_transformer=False)
+    with_arch = SymmetricMatchupModel(32, 4, 3, 3, dropout=0.0, use_deck_transformer=True)
+    assert with_arch.use_deck_transformer
+    # extra archetype parts (4 * embedding_dim, default 64) widen the orientation input
+    plain_in = plain.orientation_network[0].in_features
+    arch_in = with_arch.orientation_network[0].in_features
+    assert arch_in == plain_in + 64 * 4
+
+
+def test_explain_pairs_survive_multihead_cross() -> None:
+    model = SymmetricMatchupModel(
+        32, 4, 3, 3, dropout=0.0, use_cross_card_interactions=True, cross_heads=4
+    )
+    model.eval()
+    maps = model.explain(batch())
+    assert maps["cross_team_to_opponent"].shape == (1, 8, 8)
+
+
 def test_probability_is_antisymmetric_with_learnable_prior() -> None:
     model = SymmetricMatchupModel(
         32,

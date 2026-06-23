@@ -1,0 +1,33 @@
+# Controls what `gcloud ... --source .` uploads as the Cloud Build context.
+# IMPORTANT: when this file exists, gcloud stops honoring .gitignore. Since
+# .gitignore excludes all of artifacts/, without this file the baked-in
+# checkpoint never reaches the build and `COPY artifacts/matchup-model.pt` fails.
+# So we re-include exactly that one file below.
+
+.git
+.gitignore
+.venv/
+**/__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Training data + intermediates (can be gigabytes).
+data/
+*.parquet
+*.sqlite3
+*.duckdb
+
+# Artifacts: exclude everything except the served checkpoint. Use `artifacts/*`
+# (not `artifacts/`) so the directory itself isn't pruned and the negation can
+# re-include the one file we need.
+artifacts/*
+!artifacts/matchup-model.pt
+
+# Local dev / CI cruft not needed in the image.
+docker-compose.yml
+.github/
+*.ipynb
+seeds.txt

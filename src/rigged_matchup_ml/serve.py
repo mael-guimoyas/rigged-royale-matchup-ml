@@ -32,7 +32,7 @@ DEFAULT_MODEL_NAME = "symmetric-matchup"
 # embedded ``data_config``) still resolves real segments. Newer checkpoints carry
 # their own ``data_config`` and override this (see ``_data_config``).
 DEFAULT_DATA_CONFIG = {
-    "trophy_buckets": [0, 5000, 7000, 9000, 12000, 99999],
+    "trophy_buckets": [0, 5000, 7000, 9000, 12000, 14000, 999999],
     "top_ladder_buckets": [100, 1000, 10000],
 }
 

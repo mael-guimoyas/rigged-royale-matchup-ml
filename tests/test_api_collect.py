@@ -1,10 +1,19 @@
+from collections import Counter
+
 from rigged_matchup_ml.api_collect import (
+    BalancedFrontier,
     _battle_fingerprint,
+    _ladder_bucket_label,
+    _normalize_baseline,
+    _opponent_candidates,
+    _segment_tracked,
     league_from_profile,
     mode_key_for,
     normalize_tag,
 )
 from rigged_matchup_ml.domain import parse_battle_row
+
+BUCKETS = [0, 5000, 7000, 9000, 12000, 14000, 999999]
 
 
 def _deck(start: int) -> list[dict]:
@@ -49,7 +58,7 @@ def test_api_battle_parses_into_training_row() -> None:
         "require_exactly_eight_cards": True,
         "allowed_modes": ["ladder", "ranked"],
         "max_raw_average_level_difference": None,
-        "trophy_buckets": [0, 5000, 7000, 9000, 12000, 99999],
+        "trophy_buckets": [0, 5000, 7000, 9000, 12000, 14000, 999999],
         "top_ladder_buckets": [100, 1000, 10000],
     }
     row = {
@@ -68,3 +77,90 @@ def test_api_battle_parses_into_training_row() -> None:
     assert parsed["win"] is True
     assert len(parsed["team_card_ids"]) == 8
     assert parsed["mode_key"] == "ranked"
+
+
+def test_ladder_bucket_label_splits_seasonal_road() -> None:
+    assert _ladder_bucket_label(5200, BUCKETS) == "ladder:5000-6999"
+    assert _ladder_bucket_label(13000, BUCKETS) == "ladder:12000-13999"
+    assert _ladder_bucket_label(16000, BUCKETS) == "ladder:14000-999998"
+    assert _ladder_bucket_label(1_000_000, BUCKETS) is None
+
+
+def test_segment_tracked_keeps_high_drops_low() -> None:
+    assert _segment_tracked("ranked:league-3", 5000) is True
+    assert _segment_tracked("ranked:unknown", 5000) is True
+    assert _segment_tracked("ladder:top-100", 5000) is True
+    assert _segment_tracked("ladder:7000-8999", 5000) is True
+    assert _segment_tracked("ladder:0-4999", 5000) is False
+    assert _segment_tracked("ladder:unknown", 5000) is False
+    assert _segment_tracked("ladder:overflow", 5000) is False
+
+
+def test_opponent_candidates_carry_trophies_and_mode() -> None:
+    battle = {
+        "type": "PvP",
+        "team": [{"tag": "#AAA", "startingTrophies": 8200}],
+        "opponent": [{"tag": "#BBB", "startingTrophies": 4000}],
+    }
+    candidates = _opponent_candidates(battle)
+    assert ("#BBB", "ladder", 4000) in candidates
+    assert ("#AAA", "ladder", 8200) in candidates
+
+
+def test_frontier_skips_low_ladder_and_queues_ranked() -> None:
+    frontier = BalancedFrontier(
+        seeds=[], buckets=BUCKETS, min_trophies=5000, baseline_counts=Counter(), max_queued=None
+    )
+    skipped = frontier.add(
+        [
+            ("#LOW", "ladder", 3000),  # below min -> dropped
+            ("#MID", "ladder", 6000),  # tracked
+            ("#RANK", "ranked", None),  # ranked pooled, always kept
+            ("#NOTROPHY", "ladder", None),  # ladder w/o trophy -> dropped
+        ]
+    )
+    assert skipped == 2
+    assert frontier.queue_size() == 2
+
+
+def test_normalize_baseline_folds_legacy_blob_onto_current_buckets() -> None:
+    # Legacy "12000-99998" blob must land in the new 12000-14999 band so the
+    # split 15000+ band reads empty (not the whole high-trophy mass).
+    legacy = Counter(
+        {
+            "ladder:12000-99998": 6_000_000,
+            "ladder:7000-8999": 100,
+            "ranked:league-3": 50,
+        }
+    )
+    aligned = _normalize_baseline(legacy, BUCKETS)
+    assert aligned["ladder:12000-13999"] == 6_000_000
+    assert aligned["ladder:14000-999998"] == 0
+    assert aligned["ladder:7000-8999"] == 100
+    assert aligned["ranked:league-3"] == 50
+
+
+def test_frontier_serves_neediest_band_first() -> None:
+    # 5000-6999 is starved on disk; the frontier should pop it before the
+    # saturated 12000-13999 band even though both are queued.
+    baseline = Counter({"ladder:5000-6999": 10, "ladder:12000-13999": 10_000})
+    frontier = BalancedFrontier(
+        seeds=[], buckets=BUCKETS, min_trophies=5000, baseline_counts=baseline, max_queued=None
+    )
+    frontier.add([("#HIGH", "ladder", 13000), ("#NEEDY", "ladder", 6000)])
+    assert frontier.next_tag() == "#NEEDY"
+    assert frontier.next_tag() == "#HIGH"
+
+
+def test_frontier_bootstraps_from_seeds_when_bands_empty() -> None:
+    frontier = BalancedFrontier(
+        seeds=["#S1", "#S2"],
+        buckets=BUCKETS,
+        min_trophies=5000,
+        baseline_counts=Counter(),
+        max_queued=None,
+    )
+    # No discoveries yet -> neediest band empty -> seeds drain to bootstrap.
+    assert frontier.next_tag() in {"#S1", "#S2"}
+    assert frontier.next_tag() in {"#S1", "#S2"}
+    assert frontier.next_tag() is None

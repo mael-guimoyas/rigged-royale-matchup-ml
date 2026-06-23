@@ -32,7 +32,7 @@ DATA_CONFIG = {
     "max_raw_average_level_difference": None,
     "require_exactly_eight_cards": True,
     "top_ladder_buckets": [100, 1000, 10000],
-    "trophy_buckets": [0, 5000, 7000, 9000, 12000, 99999],
+    "trophy_buckets": [0, 5000, 7000, 9000, 12000, 14000, 999999],
 }
 
 

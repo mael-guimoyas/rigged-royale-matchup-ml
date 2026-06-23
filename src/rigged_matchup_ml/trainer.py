@@ -12,6 +12,7 @@ from torch import nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+from .card2vec import load_card2vec
 from .config import AppConfig
 from .dataset import load_vocabulary, matchup_dataloader
 from .metrics import binary_metrics, binary_metrics_by_group
@@ -66,6 +67,67 @@ def _build_scheduler(
 
 def _to_device(batch: dict[str, torch.Tensor], device: torch.device) -> dict[str, torch.Tensor]:
     return {key: value.to(device, non_blocking=True) for key, value in batch.items()}
+
+
+def _maybe_init_card2vec(
+    model: SymmetricMatchupModel,
+    prepared_dir: Path,
+    device: torch.device,
+) -> str:
+    """Warm-start the card embedding from self-supervised deck-co-occurrence vectors."""
+    weight = model.deck_encoder.card_embedding.weight
+    vectors = load_card2vec(prepared_dir, tuple(weight.shape))
+    if vectors is None:
+        return "skipped (missing or shape mismatch)"
+    with torch.no_grad():
+        weight.copy_(torch.tensor(vectors, dtype=weight.dtype, device=device))
+    return f"loaded {list(vectors.shape)}"
+
+
+def _card_weight_tensor(
+    prepared_dir: Path,
+    vocabulary: dict[str, dict[str, int]],
+    power: float,
+    cap: float,
+    device: torch.device,
+) -> torch.Tensor | None:
+    """Per-vocab-index inverse-frequency weight, normalised so the frequency-weighted
+    mean weight is 1 (keeps the loss scale and learning-rate behaviour unchanged)."""
+    path = prepared_dir / "card_frequencies.json"
+    if not path.exists():
+        return None
+    counts = json.loads(path.read_text(encoding="utf-8"))
+    card_vocabulary = vocabulary["cards"]
+    size = len(card_vocabulary) + 1
+    weights = np.zeros(size, dtype=np.float64)
+    count_vector = np.zeros(size, dtype=np.float64)
+    for card_id, index in card_vocabulary.items():
+        count = float(counts.get(str(card_id), 0))
+        count_vector[index] = count
+        weights[index] = (1.0 / count) ** power if count > 0 else 0.0
+    weighted_total = float((count_vector * weights).sum())
+    if weighted_total > 0:
+        weights *= float(count_vector.sum()) / weighted_total
+    weights = np.clip(weights, 0.0, cap)
+    weights[0] = 0.0  # padding index carries no weight
+    return torch.tensor(weights, dtype=torch.float32, device=device)
+
+
+def _weighted_bce(
+    loss_none: nn.Module,
+    logits: torch.Tensor,
+    target: torch.Tensor,
+    card_weight: torch.Tensor,
+    team_cards: torch.Tensor,
+    opponent_cards: torch.Tensor,
+) -> torch.Tensor:
+    """BCE re-weighted per sample by the rarity of the 16 cards in the matchup."""
+    pair_weights = torch.cat(
+        [card_weight[team_cards], card_weight[opponent_cards]], dim=1
+    )
+    valid = pair_weights > 0
+    sample_weight = pair_weights.sum(dim=1) / valid.sum(dim=1).clamp_min(1)
+    return (loss_none(logits, target) * sample_weight).mean()
 
 
 def _model_config(config: AppConfig, vocabulary: dict[str, dict[str, int]]) -> dict[str, Any]:
@@ -305,6 +367,11 @@ def train_model(config: AppConfig) -> Path:
     model_config = _model_config(config, vocabulary)
     device = _device(str(config.training["device"]))
     model = SymmetricMatchupModel(**model_config).to(device)
+    if bool(config.training.get("card2vec_init", False)):
+        card2vec_dir = config.training.get("card2vec_path")
+        card2vec_dir = config.resolve(card2vec_dir) if card2vec_dir else prepared_dir
+        status = _maybe_init_card2vec(model, card2vec_dir, device)
+        print(json.dumps({"card2vec_init": status}))
     train_loader = _loader(prepared_dir, "train", vocabulary, config, training=True)
     validation_loader = _loader(prepared_dir, "validation", vocabulary, config, training=False)
     optimizer_options = {
@@ -322,6 +389,19 @@ def train_model(config: AppConfig) -> Path:
         optimizer_options.pop("fused", None)
         optimizer = torch.optim.AdamW(model.parameters(), **optimizer_options)
     loss_fn = nn.BCEWithLogitsLoss()
+    loss_none = nn.BCEWithLogitsLoss(reduction="none")
+    card_weight: torch.Tensor | None = None
+    if bool(config.training.get("loss_card_frequency_weighting", False)):
+        frequencies_dir = config.training.get("card_frequencies_path")
+        frequencies_dir = config.resolve(frequencies_dir) if frequencies_dir else prepared_dir
+        card_weight = _card_weight_tensor(
+            frequencies_dir,
+            vocabulary,
+            float(config.training.get("loss_frequency_power", 0.5)),
+            float(config.training.get("loss_frequency_cap", 5.0)),
+            device,
+        )
+        print(json.dumps({"loss_card_frequency_weighting": card_weight is not None}))
     label_smoothing = float(config.training.get("label_smoothing", 0.0))
     use_amp = device.type == "cuda"
     scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
@@ -359,7 +439,17 @@ def train_model(config: AppConfig) -> Path:
                 target = target * (1.0 - label_smoothing) + 0.5 * label_smoothing
             with torch.autocast(device_type=device.type, enabled=use_amp):
                 logits = model(batch)
-                loss = loss_fn(logits, target)
+                if card_weight is not None:
+                    loss = _weighted_bce(
+                        loss_none,
+                        logits,
+                        target,
+                        card_weight,
+                        batch["team_cards"],
+                        batch["opponent_cards"],
+                    )
+                else:
+                    loss = loss_fn(logits, target)
                 scaled_loss = loss / accumulation_steps
             scaler.scale(scaled_loss).backward()
             pending_gradients += 1

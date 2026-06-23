@@ -129,6 +129,25 @@ donc les combats ranked sont segmentés `ranked:league-N` dès la collecte, sans
 La déduplication réutilise `data/dedup.sqlite3` (clé `game_id` canonique : un même combat
 vu chez deux joueurs n'est compté qu'une fois).
 
+#### Collecte équilibrée par niveau de trophées
+
+Par défaut (`--balance`), la collecte vise les bandes de trophées sous-représentées
+au lieu de re-piocher dans le coeur saturé (12000+). Au démarrage, elle scanne les
+shards existants pour mesurer la répartition actuelle (« où manque-t-il des combats »),
+puis sert en priorité la bande la plus en retard. Chaque adversaire snowballé porte ses
+`startingTrophies`, donc la file le range dans sa bande *avant* le fetch :
+
+- les adversaires ladder **sous `--min-trophies` (5000 par défaut)** sont jetés direct —
+  on ne s'entraîne pas sur le sub-5000, et les mettre en file ne faisait que gonfler la
+  queue et brûler des requêtes sur des doublons (cause du démarrage lent : ~1h à remplir
+  `accepted`). Les combats ladder parsés sous ce seuil sont aussi écartés ;
+- les combats ranked (Path of Legends, trophées masqués) sont toujours mis en file ;
+- la voie des trophées **saisonnière** monte haut : `trophy_buckets` sépare désormais
+  `12000-13999` du `14000+` (haut de la voie) au lieu d'un seul bloc `12000+`.
+
+Le récap JSON ajoute `accepted_by_segment` (par bande, sur ce run), `candidates_skipped_low`
+et `min_trophies`. Pour revenir à l'ancien crawl FIFO non orienté : `--no-balance`.
+
 Storage est du stockage objet : ces shards sont lus en masse par `prepare`/l'entraînement,
 jamais ligne par ligne. C'est le bon support pour un corpus d'entraînement. Remplis Storage
 d'abord, vérifie l'entraînement, puis seulement supprime `raw` de Postgres.

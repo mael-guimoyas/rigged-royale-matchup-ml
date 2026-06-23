@@ -18,11 +18,15 @@ class DeckEncoder(nn.Module):
         max_hero_level: int,
         max_elixir: int,
         dropout: float,
+        use_deck_transformer: bool = False,
+        deck_transformer_heads: int = 4,
+        deck_transformer_layers: int = 1,
     ) -> None:
         super().__init__()
         self.max_evolution_level = max_evolution_level
         self.max_hero_level = max_hero_level
         self.max_elixir = max_elixir
+        self.use_deck_transformer = use_deck_transformer
         self.card_embedding = nn.Embedding(card_count, embedding_dim, padding_idx=0)
         # Card-specific "this card, evolved/hero" identity shifts. A shared
         # evolution/hero LEVEL embedding alone makes evolved-ness a single global
@@ -57,6 +61,39 @@ class DeckEncoder(nn.Module):
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, embedding_dim),
         )
+        # Intra-deck self-attention over the 8 own cards with a learned archetype
+        # ([CLS]) token. Mean-pooling alone bags cards independently, so deck style
+        # (beatdown / cycle / bait / siege) and 3+ card combos can only leak through
+        # the pooled average. Self-attention lets every card attend to the rest and
+        # the [CLS] read-out condenses that into one learned archetype vector --
+        # higher-order synergy + archetype, learned from win/loss, no labels.
+        self.archetype_token: nn.Parameter | None = None
+        self.deck_transformer: nn.TransformerEncoder | None = None
+        if use_deck_transformer:
+            self.archetype_token = nn.Parameter(torch.zeros(1, 1, embedding_dim))
+            nn.init.normal_(self.archetype_token, std=0.02)
+            deck_layer = nn.TransformerEncoderLayer(
+                d_model=embedding_dim,
+                nhead=deck_transformer_heads,
+                dim_feedforward=hidden_dim,
+                dropout=dropout,
+                activation="gelu",
+                batch_first=True,
+            )
+            self.deck_transformer = nn.TransformerEncoder(
+                deck_layer, num_layers=deck_transformer_layers, enable_nested_tensor=False
+            )
+
+    def _archetype(self, card_features: torch.Tensor, card_mask: torch.Tensor) -> torch.Tensor:
+        if self.deck_transformer is None or self.archetype_token is None:
+            raise ValueError("Deck transformer is enabled but not initialized")
+        batch = card_features.shape[0]
+        cls = self.archetype_token.expand(batch, 1, -1)
+        tokens = torch.cat([cls, card_features], dim=1)
+        cls_mask = torch.ones(batch, 1, dtype=torch.bool, device=card_features.device)
+        full_mask = torch.cat([cls_mask, card_mask], dim=1)
+        encoded = self.deck_transformer(tokens, src_key_padding_mask=~full_mask)
+        return encoded[:, 0]
 
     def encode(
         self,
@@ -66,7 +103,7 @@ class DeckEncoder(nn.Module):
         roles: torch.Tensor,
         tower: torch.Tensor,
         elixir: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor | None]:
         mask = cards.ne(0).unsqueeze(-1)
         evolutions = evolutions.clamp(0, self.max_evolution_level)
         heroes = heroes.clamp(0, self.max_hero_level)
@@ -93,11 +130,13 @@ class DeckEncoder(nn.Module):
             dim=-1,
         )
         card_features = self.card_projection(card_features) * mask
+        card_mask = mask.squeeze(-1)
         pooled = card_features.sum(dim=1) / mask.sum(dim=1).clamp_min(1)
         deck_features = self.deck_projection(
             torch.cat([pooled, self.tower_embedding(tower)], dim=-1)
         )
-        return deck_features, card_features, mask.squeeze(-1)
+        archetype = self._archetype(card_features, card_mask) if self.use_deck_transformer else None
+        return deck_features, card_features, card_mask, archetype
 
     def forward(
         self,
@@ -108,7 +147,7 @@ class DeckEncoder(nn.Module):
         tower: torch.Tensor,
         elixir: torch.Tensor,
     ) -> torch.Tensor:
-        deck_features, _, _ = self.encode(cards, evolutions, heroes, roles, tower, elixir)
+        deck_features, _, _, _ = self.encode(cards, evolutions, heroes, roles, tower, elixir)
         return deck_features
 
 
@@ -155,6 +194,7 @@ class CardInteractionEncoder(nn.Module):
         hidden_dim: int,
         dropout: float,
         use_bilinear_cross: bool = True,
+        cross_heads: int = 1,
     ) -> None:
         super().__init__()
         self.cross_pairs = PairSummaryEncoder(embedding_dim, hidden_dim, dropout)
@@ -164,14 +204,31 @@ class CardInteractionEncoder(nn.Module):
         # an oriented "card A counters card B" relation: (A W) ⊙ B. Initialised to
         # identity so it starts as the original elementwise product and learns the
         # counter structure from win/loss only.
+        #
+        # One W = one counter "mode". `cross_heads` > 1 learns several distinct
+        # oriented relations in parallel (e.g. anti-air / anti-swarm / anti-tank);
+        # each head is identity-init + small noise to break head symmetry, and a
+        # linear combiner folds the heads back to embedding_dim.
         self.use_bilinear_cross = use_bilinear_cross
-        self.cross_bilinear = (
-            nn.Linear(embedding_dim, embedding_dim, bias=False)
-            if use_bilinear_cross
-            else None
-        )
-        if self.cross_bilinear is not None:
-            nn.init.eye_(self.cross_bilinear.weight)
+        self.cross_heads = max(1, cross_heads)
+        self.cross_bilinear: nn.Linear | None = None
+        self.cross_head_combine: nn.Linear | None = None
+        if use_bilinear_cross:
+            self.cross_bilinear = nn.Linear(
+                embedding_dim, embedding_dim * self.cross_heads, bias=False
+            )
+            with torch.no_grad():
+                heads = self.cross_bilinear.weight.view(
+                    self.cross_heads, embedding_dim, embedding_dim
+                )
+                for head in range(self.cross_heads):
+                    nn.init.eye_(heads[head])
+                if self.cross_heads > 1:
+                    heads.add_(torch.randn_like(heads) * 0.02)
+            if self.cross_heads > 1:
+                self.cross_head_combine = nn.Linear(
+                    embedding_dim * self.cross_heads, embedding_dim
+                )
         self.register_buffer("pair_first_indices", DECK_PAIR_INDICES[0], persistent=False)
         self.register_buffer("pair_second_indices", DECK_PAIR_INDICES[1], persistent=False)
 
@@ -183,17 +240,29 @@ class CardInteractionEncoder(nn.Module):
         second_mask: torch.Tensor,
         return_weights: bool = False,
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
-        first_projected = (
-            self.cross_bilinear(first_cards)
-            if self.cross_bilinear is not None
-            else first_cards
-        )
         # Flattened pair index is first * 8 + second, i.e. [source, target] when the
         # weights are viewed as (batch, 8, 8): row = first/source deck position,
         # column = second/target deck position.
-        pair_features = (
-            first_projected[:, :, None, :] * second_cards[:, None, :, :]
-        ).flatten(1, 2)
+        if self.cross_bilinear is None:
+            pair_features = (
+                first_cards[:, :, None, :] * second_cards[:, None, :, :]
+            ).flatten(1, 2)
+        elif self.cross_heads == 1:
+            first_projected = self.cross_bilinear(first_cards)
+            pair_features = (
+                first_projected[:, :, None, :] * second_cards[:, None, :, :]
+            ).flatten(1, 2)
+        else:
+            batch, count, dim = first_cards.shape
+            projected = self.cross_bilinear(first_cards).view(
+                batch, count, self.cross_heads, dim
+            )
+            # (B, 8, 1, H, D) * (B, 1, 8, 1, D) -> (B, 8, 8, H, D) -> (B, 64, H*D)
+            per_head = (
+                projected[:, :, None, :, :] * second_cards[:, None, :, None, :]
+            ).flatten(1, 2).flatten(-2, -1)
+            assert self.cross_head_combine is not None
+            pair_features = self.cross_head_combine(per_head)
         pair_mask = (first_mask[:, :, None] & second_mask[:, None, :]).flatten(1, 2)
         return self.cross_pairs(pair_features, pair_mask, return_weights=return_weights)
 
@@ -234,6 +303,10 @@ class SymmetricMatchupModel(nn.Module):
         transformer_heads: int = 4,
         use_segment_adapters: bool = False,
         use_bilinear_cross: bool = True,
+        cross_heads: int = 1,
+        use_deck_transformer: bool = False,
+        deck_transformer_heads: int = 4,
+        deck_transformer_layers: int = 1,
         matrix_prior_learnable: bool = False,
     ) -> None:
         super().__init__()
@@ -253,6 +326,7 @@ class SymmetricMatchupModel(nn.Module):
         self.card_dropout = card_dropout
         self.use_matchup_transformer = use_matchup_transformer
         self.use_segment_adapters = use_segment_adapters
+        self.use_deck_transformer = use_deck_transformer
         self.deck_encoder = DeckEncoder(
             card_count,
             tower_count,
@@ -262,10 +336,17 @@ class SymmetricMatchupModel(nn.Module):
             max_hero_level,
             max_elixir,
             dropout,
+            use_deck_transformer=use_deck_transformer,
+            deck_transformer_heads=deck_transformer_heads,
+            deck_transformer_layers=deck_transformer_layers,
         )
         self.card_interactions = (
             CardInteractionEncoder(
-                embedding_dim, hidden_dim, dropout, use_bilinear_cross=use_bilinear_cross
+                embedding_dim,
+                hidden_dim,
+                dropout,
+                use_bilinear_cross=use_bilinear_cross,
+                cross_heads=cross_heads,
             )
             if use_cross_card_interactions or use_intra_deck_synergies
             else None
@@ -292,6 +373,8 @@ class SymmetricMatchupModel(nn.Module):
             )
         interaction_input = embedding_dim * 4 + context_dim * 2
         if use_intra_deck_synergies:
+            interaction_input += embedding_dim * 4
+        if use_deck_transformer:
             interaction_input += embedding_dim * 4
         if use_cross_card_interactions:
             interaction_input += embedding_dim
@@ -373,6 +456,8 @@ class SymmetricMatchupModel(nn.Module):
         cross_interactions: torch.Tensor | None = None,
         matchup_summary: torch.Tensor | None = None,
         segment_ids: torch.Tensor | None = None,
+        first_archetype: torch.Tensor | None = None,
+        second_archetype: torch.Tensor | None = None,
     ) -> torch.Tensor:
         parts = [first, second, first - second, first * second]
         if self.use_intra_deck_synergies:
@@ -384,6 +469,17 @@ class SymmetricMatchupModel(nn.Module):
                     second_synergy,
                     first_synergy - second_synergy,
                     first_synergy * second_synergy,
+                ]
+            )
+        if self.use_deck_transformer:
+            if first_archetype is None or second_archetype is None:
+                raise ValueError("Deck transformer is enabled but archetype missing")
+            parts.extend(
+                [
+                    first_archetype,
+                    second_archetype,
+                    first_archetype - second_archetype,
+                    first_archetype * second_archetype,
                 ]
             )
         if self.use_cross_card_interactions:
@@ -431,7 +527,7 @@ class SymmetricMatchupModel(nn.Module):
             batch["opponent_roles"],
             batch["opponent_elixir"],
         )
-        team, team_cards, team_mask = self.deck_encoder.encode(
+        team, team_cards, team_mask, team_archetype = self.deck_encoder.encode(
             team_cards_input,
             team_evos,
             team_heroes,
@@ -439,7 +535,7 @@ class SymmetricMatchupModel(nn.Module):
             batch["team_tower"],
             team_elixir,
         )
-        opponent, opponent_cards, opponent_mask = self.deck_encoder.encode(
+        opponent, opponent_cards, opponent_mask, opponent_archetype = self.deck_encoder.encode(
             opponent_cards_input,
             opponent_evos,
             opponent_heroes,
@@ -485,6 +581,8 @@ class SymmetricMatchupModel(nn.Module):
                 team_to_opponent,
                 team_matchup_summary,
                 batch["segment"],
+                team_archetype,
+                opponent_archetype,
             )
             - self._orientation_score(
                 opponent,
@@ -495,6 +593,8 @@ class SymmetricMatchupModel(nn.Module):
                 opponent_to_team,
                 opponent_matchup_summary,
                 batch["segment"],
+                opponent_archetype,
+                team_archetype,
             )
         )
         prior = batch["matrix_prior"].clamp(1e-4, 1 - 1e-4)
@@ -524,7 +624,7 @@ class SymmetricMatchupModel(nn.Module):
         self.eval()
         if self.card_interactions is None:
             return {}
-        _, team_cards, team_mask = self.deck_encoder.encode(
+        _, team_cards, team_mask, _ = self.deck_encoder.encode(
             batch["team_cards"],
             batch["team_evos"],
             batch["team_heroes"],
@@ -532,7 +632,7 @@ class SymmetricMatchupModel(nn.Module):
             batch["team_tower"],
             batch["team_elixir"],
         )
-        _, opponent_cards, opponent_mask = self.deck_encoder.encode(
+        _, opponent_cards, opponent_mask, _ = self.deck_encoder.encode(
             batch["opponent_cards"],
             batch["opponent_evos"],
             batch["opponent_heroes"],

@@ -13,8 +13,13 @@ data:
   allowed_modes: [ladder, ranked]
   # Leave null to avoid treating raw API levels as comparable across rarities.
   max_raw_average_level_difference: null
-  trophy_buckets: [0, 5000, 7000, 9000, 12000, 99999]
+  # 14000 splits the seasonal trophy road (voie saisonnière) so the huge old
+  # "12000-99998" blob becomes 12000-13999 + 14000+ instead of one band.
+  trophy_buckets: [0, 5000, 7000, 9000, 12000, 14000, 999999]
   top_ladder_buckets: [100, 1000, 10000]
+  # collect-api drops ladder battles/opponents below this trophy count: we don't
+  # train on sub-5000 ladder, and queueing them only bloats the crawl frontier.
+  collect_min_trophies: 5000
   # Optional dotted callable: "my_package.my_prior:predict".
   # It receives the parsed record and returns P(team wins) from your matrix.
   matrix_prior_provider: null
@@ -46,6 +51,14 @@ model:
   # Learned oriented card-vs-card interaction (A counters B) instead of a plain
   # symmetric Hadamard product. Initialised to identity, learns from win/loss.
   use_bilinear_cross: true
+  # Multiple oriented counter relations in parallel (anti-air / anti-swarm / ...),
+  # each an identity-init bilinear head folded back to embedding_dim. 1 = legacy.
+  cross_heads: 4
+  # Intra-deck self-attention + a learned [CLS] archetype token: captures deck
+  # style (beatdown/cycle/bait/siege) and 3+ card combos beyond pairwise synergy.
+  use_deck_transformer: true
+  deck_transformer_heads: 4
+  deck_transformer_layers: 1
 
 training:
   seed: 42
@@ -66,6 +79,16 @@ training:
   label_smoothing: 0.02
   device: auto
   artifact_dir: artifacts
+  # Warm-start card embeddings from self-supervised deck co-occurrence (run
+  # `rigged-matchup pretrain-cards` after `prepare`). Rare cards start near
+  # functionally-similar ones instead of random. No labels, no card stats.
+  card2vec_init: true
+  # Inverse-frequency loss weighting so rare cards/matchups aren't drowned out by
+  # the popular meta. Weight per sample = mean rarity of its 16 cards, normalised
+  # so the average weight stays 1. power = how aggressive; cap bounds rare boosts.
+  loss_card_frequency_weighting: true
+  loss_frequency_power: 0.5
+  loss_frequency_cap: 5.0
 
 evaluation:
   bad_threshold: 0.40

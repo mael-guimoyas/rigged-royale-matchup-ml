@@ -7,6 +7,7 @@ import typer
 
 from .api_collect import collect_from_api, download_from_storage
 from .benchmark import benchmark_model
+from .card2vec import pretrain_card_embeddings
 from .config import load_config
 from .diagnostics import diagnose_ranked_segments
 from .empirical_prior import attach_empirical_prior
@@ -71,6 +72,17 @@ def collect_api(
     ),
     bucket: str = typer.Option("training-battles", help="Storage bucket for shards."),
     prefix: str = typer.Option("battles", help="Object key prefix inside the bucket."),
+    min_trophies: int | None = typer.Option(
+        None,
+        help="Drop ladder battles/opponents below this trophy count (default from "
+        "config collect_min_trophies, 5000). 'En dessous on s'en fout'.",
+    ),
+    balance: bool = typer.Option(
+        True,
+        "--balance/--no-balance",
+        help="Steer the crawl toward trophy bands under-represented on disk "
+        "(scans existing shards at startup to find the gaps).",
+    ),
 ) -> None:
     """Fetch battles from the Clash Royale API into training Parquet (local + Storage)."""
     if tags_file is not None and not tags_file.exists():
@@ -91,6 +103,8 @@ def collect_api(
         upload=upload,
         bucket=bucket,
         prefix=prefix,
+        min_trophies=min_trophies,
+        balance=balance,
     )
     typer.echo(json.dumps(result, indent=2))
 
@@ -188,6 +202,22 @@ def diagnose_ranked_segments_command(
 def prepare(config: Path = DEFAULT_CONFIG, overwrite: bool = False) -> None:
     """Create leakage-safe chronological train/validation/test splits and vocabularies."""
     result = prepare_splits(load_config(config), overwrite=overwrite)
+    typer.echo(json.dumps(result, indent=2))
+
+
+@app.command("pretrain-cards")
+def pretrain_cards(
+    config: Path = DEFAULT_CONFIG,
+    max_rows: int | None = typer.Option(
+        None, help="Cap training decks scanned for co-occurrence (smoke test)."
+    ),
+) -> None:
+    """Self-supervised card embeddings from deck co-occurrence (run after prepare).
+
+    Writes data/prepared/card2vec.npy; training loads it as the card-embedding
+    warm-start when `card2vec_init` is on. Pure co-occurrence, no labels/stats.
+    """
+    result = pretrain_card_embeddings(load_config(config), max_rows=max_rows)
     typer.echo(json.dumps(result, indent=2))
 
 

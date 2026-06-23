@@ -108,6 +108,23 @@ def prepare_splits(config: AppConfig, overwrite: bool = False) -> dict[str, Any]
     (prepared_dir / "vocabulary.json").write_text(
         json.dumps(vocabulary, indent=2, sort_keys=True), encoding="utf-8"
     )
+    # Per-card train frequency, for inverse-frequency loss weighting: rare cards
+    # are under-sampled, so without this the model just learns the popular meta.
+    card_counts = {
+        str(row[0]): int(row[1])
+        for row in connection.execute(
+            f"""
+            select card_id, count(*) from (
+              select unnest(team_card_ids) card_id from read_parquet('{train_file}')
+              union all
+              select unnest(opponent_card_ids) card_id from read_parquet('{train_file}')
+            ) group by card_id
+            """
+        ).fetchall()
+    }
+    (prepared_dir / "card_frequencies.json").write_text(
+        json.dumps(card_counts, indent=2, sort_keys=True), encoding="utf-8"
+    )
     manifest = {
         "counts": counts,
         "train_cutoff_epoch": train_cutoff,
