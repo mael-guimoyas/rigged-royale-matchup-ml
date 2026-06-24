@@ -5,11 +5,13 @@ import random
 from pathlib import Path
 from typing import Iterator
 
+import numpy as np
+import pyarrow.compute as pc
 import pyarrow.dataset as pads
 import torch
 from torch.utils.data import DataLoader, IterableDataset, get_worker_info
 
-from .card_stats import elixir_for
+from .card_stats import CARD_ELIXIR, elixir_for
 
 
 FEATURE_COLUMNS = [
@@ -219,6 +221,157 @@ def encode_rows(
     }
 
 
+# ---------------------------------------------------------------------------
+# Vectorised batch encoding (training hot path).
+#
+# encode_row / encode_rows above build tensors with a Python loop per row: a
+# str()+dict lookup per card, elixir_for per card, padding, a tensor per field.
+# On a fast GPU that per-row Python work starves the device -- DataLoader workers
+# can't refill batches quickly enough, so the GPU sits near 0%. The helpers below
+# do the identical encoding with whole-column numpy ops over a pyarrow
+# RecordBatch (no Python per row), so a couple of workers keep the GPU fed.
+# Card ids are large and sparse, so a dense lookup table is impossible; we map
+# them with a sorted-key np.searchsorted instead. Output is byte-for-byte
+# identical to encode_rows (guarded by test_vectorised_batch_matches_encode_rows).
+# ---------------------------------------------------------------------------
+
+# Team/opponent fields that exchange places when a row is swap-augmented.
+_PAIRED_FIELDS = (
+    ("team_cards", "opponent_cards"),
+    ("team_elixir", "opponent_elixir"),
+    ("team_evos", "opponent_evos"),
+    ("team_heroes", "opponent_heroes"),
+    ("team_roles", "opponent_roles"),
+    ("team_tower", "opponent_tower"),
+)
+_FLOAT_FIELDS = ("matrix_prior", "target")
+
+
+def _int_lut(mapping: dict) -> tuple[np.ndarray, np.ndarray]:
+    """Sorted (keys, values) int arrays for an id->index map; keys may be int or str."""
+    keys = np.fromiter((int(key) for key in mapping), dtype=np.int64, count=len(mapping))
+    values = np.fromiter((mapping[key] for key in mapping), dtype=np.int64, count=len(mapping))
+    order = np.argsort(keys, kind="stable")
+    return keys[order], values[order]
+
+
+def _str_lut(mapping: dict[str, int]) -> tuple[np.ndarray, np.ndarray]:
+    """Sorted (keys, values) arrays for a str-keyed vocabulary (segment/patch/tower)."""
+    items = sorted(mapping.items())
+    keys = np.array([key for key, _ in items], dtype=str)
+    values = np.array([value for _, value in items], dtype=np.int64)
+    return keys, values
+
+
+class _EncodeContext:
+    """Sorted lookup tables for vectorised encoding; built once, reused per batch."""
+
+    __slots__ = (
+        "card_keys", "card_values", "elixir_keys", "elixir_values",
+        "tower_keys", "tower_values", "segment_keys", "segment_values",
+        "patch_keys", "patch_values",
+    )
+
+    def __init__(self, vocabulary: dict[str, dict[str, int]]) -> None:
+        self.card_keys, self.card_values = _int_lut(vocabulary["cards"])
+        self.elixir_keys, self.elixir_values = _int_lut(CARD_ELIXIR)
+        self.tower_keys, self.tower_values = _str_lut(vocabulary["towers"])
+        self.segment_keys, self.segment_values = _str_lut(vocabulary["segments"])
+        self.patch_keys, self.patch_values = _str_lut(vocabulary["patches"])
+
+
+def _lookup(values: np.ndarray, keys: np.ndarray, mapped: np.ndarray) -> np.ndarray:
+    """Map ``values`` through a sorted (keys -> mapped) table; misses become 0."""
+    if keys.size == 0:
+        return np.zeros(values.shape, dtype=np.int64)
+    flat = values.reshape(-1)
+    position = np.searchsorted(keys, flat)
+    np.clip(position, 0, keys.size - 1, out=position)
+    hit = keys[position] == flat
+    result = np.where(hit, mapped[position], 0)
+    return result.reshape(values.shape).astype(np.int64, copy=False)
+
+
+def _list_matrix(column, width: int = 8) -> np.ndarray:
+    """A list<int> arrow column -> dense (n, width) int64, truncated/zero-padded."""
+    count = len(column)
+    out = np.zeros((count, width), dtype=np.int64)
+    if count == 0:
+        return out
+    flat = column.flatten().to_numpy(zero_copy_only=False).astype(np.int64, copy=False)
+    lengths = pc.list_value_length(column).to_numpy(zero_copy_only=False).astype(np.int64)
+    if bool((lengths == width).all()):
+        return flat.reshape(count, width)
+    starts = np.zeros(count + 1, dtype=np.int64)
+    np.cumsum(lengths, out=starts[1:])
+    rows = np.repeat(np.arange(count), lengths)
+    within = np.arange(flat.shape[0], dtype=np.int64) - np.repeat(starts[:-1], lengths)
+    keep = within < width
+    out[rows[keep], within[keep]] = flat[keep]
+    return out
+
+
+def _decode_batch(batch, context: _EncodeContext) -> dict[str, np.ndarray]:
+    """Decode a whole pyarrow RecordBatch into named numpy arrays (no swap applied)."""
+    column = batch.column
+    team_raw = _list_matrix(column("team_card_ids"))
+    opponent_raw = _list_matrix(column("opponent_card_ids"))
+    tower_team = column("team_tower_troop_id").to_numpy(zero_copy_only=False).astype(str)
+    tower_opponent = column("opponent_tower_troop_id").to_numpy(zero_copy_only=False).astype(str)
+    return {
+        "team_cards": _lookup(team_raw, context.card_keys, context.card_values),
+        "opponent_cards": _lookup(opponent_raw, context.card_keys, context.card_values),
+        "team_elixir": _lookup(team_raw, context.elixir_keys, context.elixir_values),
+        "opponent_elixir": _lookup(opponent_raw, context.elixir_keys, context.elixir_values),
+        "team_evos": _list_matrix(column("team_evolution_levels")),
+        "opponent_evos": _list_matrix(column("opponent_evolution_levels")),
+        "team_heroes": _list_matrix(column("team_hero_levels")),
+        "opponent_heroes": _list_matrix(column("opponent_hero_levels")),
+        "team_roles": _list_matrix(column("team_card_roles")),
+        "opponent_roles": _list_matrix(column("opponent_card_roles")),
+        "team_tower": _lookup(tower_team, context.tower_keys, context.tower_values),
+        "opponent_tower": _lookup(tower_opponent, context.tower_keys, context.tower_values),
+        "segment": _lookup(
+            column("segment").to_numpy(zero_copy_only=False).astype(str),
+            context.segment_keys,
+            context.segment_values,
+        ),
+        "patch": _lookup(
+            column("patch").to_numpy(zero_copy_only=False).astype(str),
+            context.patch_keys,
+            context.patch_values,
+        ),
+        "win": column("win").to_numpy(zero_copy_only=False).astype(np.float32),
+        "matrix_prior": column("matrix_prior").to_numpy(zero_copy_only=False).astype(np.float32),
+    }
+
+
+def _assemble_batch(
+    decoded: dict[str, np.ndarray], swap: np.ndarray, start: int, stop: int
+) -> dict[str, torch.Tensor]:
+    """Slice [start:stop], apply per-row swap, and convert to the model's tensor dict."""
+    section = slice(start, stop)
+    swapped = swap[section]
+    out: dict[str, np.ndarray] = {}
+    for team_key, opponent_key in _PAIRED_FIELDS:
+        team = decoded[team_key][section]
+        opponent = decoded[opponent_key][section]
+        mask = swapped.reshape((-1,) + (1,) * (team.ndim - 1))
+        out[team_key] = np.where(mask, opponent, team)
+        out[opponent_key] = np.where(mask, team, opponent)
+    out["segment"] = decoded["segment"][section]
+    out["patch"] = decoded["patch"][section]
+    win = decoded["win"][section]
+    prior = decoded["matrix_prior"][section]
+    out["target"] = np.where(swapped, 1.0 - win, win)
+    out["matrix_prior"] = np.where(swapped, 1.0 - prior, prior)
+    tensors: dict[str, torch.Tensor] = {}
+    for key, value in out.items():
+        dtype = np.float32 if key in _FLOAT_FIELDS else np.int64
+        tensors[key] = torch.from_numpy(np.ascontiguousarray(value, dtype=dtype))
+    return tensors
+
+
 class MatchupIterableDataset(IterableDataset):
     def __init__(
         self,
@@ -282,6 +435,7 @@ class BatchedMatchupIterableDataset(IterableDataset):
         self.batch_size = batch_size
         self.scan_batch_size = max(scan_batch_size, batch_size)
         self._epoch = 0
+        self._context: _EncodeContext | None = None
 
     def _fragments(self) -> list:
         fragments = _fragments_by_row_group(self.split_dir)
@@ -297,24 +451,29 @@ class BatchedMatchupIterableDataset(IterableDataset):
         epoch = self._epoch
         self._epoch += 1
         worker_seed = self.seed + (worker.id if worker else 0) + epoch * 100_003
-        rng = random.Random(worker_seed)
+        rng = np.random.default_rng(worker_seed)
+        if self._context is None:
+            self._context = _EncodeContext(self.vocabulary)
         fragments = self._fragments()
         if self.shuffle:
-            rng.shuffle(fragments)
+            fragments = [fragments[i] for i in rng.permutation(len(fragments))]
         for fragment in fragments:
             scanner = fragment.scanner(columns=FEATURE_COLUMNS, batch_size=self.scan_batch_size)
             for record_batch in scanner.to_batches():
-                rows = record_batch.to_pylist()
+                decoded = _decode_batch(record_batch, self._context)
+                count = decoded["win"].shape[0]
+                if count == 0:
+                    continue
                 if self.shuffle:
-                    rng.shuffle(rows)
-                for offset in range(0, len(rows), self.batch_size):
-                    batch_rows = rows[offset : offset + self.batch_size]
-                    swapped = (
-                        [rng.random() < 0.5 for _ in batch_rows]
-                        if self.augment_swap
-                        else None
-                    )
-                    yield encode_rows(batch_rows, self.vocabulary, swapped=swapped)
+                    order = rng.permutation(count)
+                    decoded = {key: value[order] for key, value in decoded.items()}
+                swap = (
+                    rng.random(count) < 0.5
+                    if self.augment_swap
+                    else np.zeros(count, dtype=bool)
+                )
+                for offset in range(0, count, self.batch_size):
+                    yield _assemble_batch(decoded, swap, offset, offset + self.batch_size)
 
 
 def matchup_dataloader(

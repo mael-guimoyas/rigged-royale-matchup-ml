@@ -19,6 +19,7 @@ from typing import Any
 
 import numpy as np
 import pyarrow.dataset as pads
+from tqdm import tqdm
 
 from .config import AppConfig
 from .dataset import load_vocabulary
@@ -98,7 +99,9 @@ def pretrain_card_embeddings(
         columns=["team_card_ids", "opponent_card_ids"], batch_size=65_536
     )
     scanned = 0
-    for record_batch in scanner.to_batches():
+    for record_batch in tqdm(
+        scanner.to_batches(), desc="card2vec train scan", unit="batch"
+    ):
         teams = record_batch.column("team_card_ids").to_pylist()
         opponents = record_batch.column("opponent_card_ids").to_pylist()
         for decks in (teams, opponents):
@@ -133,7 +136,9 @@ def write_card_frequencies(config: AppConfig, output_dir: Path | None = None) ->
     scanner = dataset.scanner(
         columns=["team_card_ids", "opponent_card_ids"], batch_size=65_536
     )
-    for record_batch in scanner.to_batches():
+    for record_batch in tqdm(
+        scanner.to_batches(), desc="card frequencies train scan", unit="batch"
+    ):
         for column in ("team_card_ids", "opponent_card_ids"):
             for deck in record_batch.column(column).to_pylist():
                 for card in deck:

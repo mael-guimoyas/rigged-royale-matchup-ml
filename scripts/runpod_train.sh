@@ -11,6 +11,10 @@ CONFIG_PATH="${CONFIG_PATH:-/workspace/runpod.yaml}"
 VENV_DIR="${VENV_DIR:-/workspace/rrm-venv}"
 export RAW_DIR PREPARED_DIR ARTIFACT_DIR CONFIG_PATH
 
+log_step() {
+  echo "[$(date -Is)] $*"
+}
+
 if [[ ! -f "pyproject.toml" || ! -d "src/rigged_matchup_ml" ]]; then
   if [[ -d "$WORKDIR/.git" ]]; then
     cd "$WORKDIR"
@@ -23,11 +27,13 @@ fi
 
 mkdir -p "$RAW_DIR" "$PREPARED_DIR" "$ARTIFACT_DIR"
 
+log_step "Installing Python package"
 python -m venv --system-site-packages "$VENV_DIR"
 source "$VENV_DIR/bin/activate"
 python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 
+log_step "Writing RunPod config"
 python - <<'PY'
 import os
 from pathlib import Path
@@ -60,6 +66,7 @@ with config_path.open("w", encoding="utf-8") as handle:
 print(f"wrote {config_path}")
 PY
 
+log_step "Checking CUDA"
 python - <<'PY'
 import json
 import torch
@@ -76,10 +83,12 @@ PY
 
 if [[ ! -f "$PREPARED_DIR/manifest.json" ]]; then
   if [[ -n "${SUPABASE_URL:-}" && -n "${SUPABASE_SECRET_KEY:-}" ]]; then
+    log_step "Pulling raw Parquet shards from Supabase Storage"
     rigged-matchup pull-storage --config "$CONFIG_PATH" \
       --bucket "${TRAINING_BUCKET:-training-battles}" \
       --prefix "${TRAINING_PREFIX:-battles}" \
       --workers "${STORAGE_DOWNLOAD_WORKERS:-16}"
+    log_step "Preparing chronological train/validation/test splits"
     rigged-matchup prepare --config "$CONFIG_PATH" --overwrite
   else
     echo "Missing $PREPARED_DIR/manifest.json."
@@ -88,17 +97,26 @@ if [[ ! -f "$PREPARED_DIR/manifest.json" ]]; then
   fi
 fi
 
-rigged-matchup pretrain-cards --config "$CONFIG_PATH"
+if [[ ! -f "$PREPARED_DIR/card2vec.npy" ]]; then
+  log_step "Pretraining card embeddings"
+  rigged-matchup pretrain-cards --config "$CONFIG_PATH"
+else
+  log_step "Skipping card2vec pretrain; $PREPARED_DIR/card2vec.npy already exists"
+fi
 
 if [[ "${RUN_ATTACH_PRIOR:-0}" == "1" ]]; then
+  log_step "Attaching empirical prior"
   rigged-matchup attach-prior --config "$CONFIG_PATH"
 fi
 
+log_step "Starting model training"
 rigged-matchup train --config "$CONFIG_PATH" 2>&1 | tee "$ARTIFACT_DIR/train.log"
+log_step "Evaluating checkpoint"
 rigged-matchup evaluate "$ARTIFACT_DIR/matchup-model.pt" --config "$CONFIG_PATH" \
   2>&1 | tee "$ARTIFACT_DIR/evaluate.log"
 
 if [[ "${RUN_BENCHMARK:-1}" == "1" ]]; then
+  log_step "Running benchmark"
   rigged-matchup benchmark "$ARTIFACT_DIR/matchup-model.pt" --config "$CONFIG_PATH" \
     --split test --min-support "${BENCHMARK_MIN_SUPPORT:-100}" \
     2>&1 | tee "$ARTIFACT_DIR/benchmark.log"

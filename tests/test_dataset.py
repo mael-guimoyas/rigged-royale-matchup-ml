@@ -1,6 +1,14 @@
+import numpy as np
+import pyarrow as pa
 import torch
 
-from rigged_matchup_ml.dataset import encode_row, encode_rows
+from rigged_matchup_ml.dataset import (
+    _assemble_batch,
+    _decode_batch,
+    _EncodeContext,
+    encode_row,
+    encode_rows,
+)
 
 
 VOCABULARY = {
@@ -49,3 +57,42 @@ def test_encode_rows_matches_swapped_encode_row() -> None:
         encode_rows([sample], VOCABULARY, swapped=[True]),
         encode_row(sample, VOCABULARY, swapped=True),
     )
+
+
+def _record_batch(rows: list[dict]) -> pa.RecordBatch:
+    return pa.RecordBatch.from_pydict(
+        {name: [r[name] for r in rows] for name in rows[0]}
+    )
+
+
+def _second_row() -> dict:
+    sample = row()
+    # A short deck (padding path), an unmapped card (vocab miss -> 0), a different
+    # tower / loss, to exercise the branches encode_rows handles per row.
+    sample["team_card_ids"] = [26000003, 26000004, 99999999]
+    sample["opponent_card_ids"] = [26000010 + index for index in range(8)]
+    sample["team_tower_troop_id"] = 159000001
+    sample["matrix_prior"] = 0.18
+    sample["win"] = False
+    return sample
+
+
+def test_vectorised_batch_matches_encode_rows() -> None:
+    rows = [row(), _second_row()]
+    context = _EncodeContext(VOCABULARY)
+    decoded = _decode_batch(_record_batch(rows), context)
+    batch = _assemble_batch(decoded, np.zeros(len(rows), dtype=bool), 0, len(rows))
+    expected = encode_rows(rows, VOCABULARY)
+    for key, value in expected.items():
+        assert torch.equal(batch[key], value), key
+
+
+def test_vectorised_batch_matches_encode_rows_swapped() -> None:
+    rows = [row(), _second_row()]
+    swap = np.array([True, False])
+    context = _EncodeContext(VOCABULARY)
+    decoded = _decode_batch(_record_batch(rows), context)
+    batch = _assemble_batch(decoded, swap, 0, len(rows))
+    expected = encode_rows(rows, VOCABULARY, swapped=list(swap))
+    for key, value in expected.items():
+        assert torch.equal(batch[key], value), key

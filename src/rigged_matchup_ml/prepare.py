@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +14,11 @@ from .config import AppConfig
 
 def _quoted(path: Path) -> str:
     return str(path).replace("'", "''")
+
+
+def _log(message: str) -> None:
+    timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    print(f"[{timestamp}] {message}", file=sys.stderr, flush=True)
 
 
 def prepare_splits(config: AppConfig, overwrite: bool = False) -> dict[str, Any]:
@@ -31,6 +38,7 @@ def prepare_splits(config: AppConfig, overwrite: bool = False) -> dict[str, Any]
     validation_boundary = train_fraction + validation_fraction
     connection = duckdb.connect()
     connection.execute("set preserve_insertion_order=false")
+    _log("prepare: computing chronological train/validation cutoffs")
     quantiles = connection.execute(
         f"""
         select quantile_cont(epoch(battle_time), [{train_fraction}, {validation_boundary}])
@@ -51,6 +59,7 @@ def prepare_splits(config: AppConfig, overwrite: bool = False) -> dict[str, Any]
         destination = prepared_dir / split
         destination.mkdir(parents=True, exist_ok=True)
         output = _quoted(destination / "data.parquet")
+        _log(f"prepare: writing {split} split")
         connection.execute(
             f"""
             copy (
@@ -61,8 +70,10 @@ def prepare_splits(config: AppConfig, overwrite: bool = False) -> dict[str, Any]
         counts[split] = connection.execute(
             f"select count(*) from read_parquet('{output}')"
         ).fetchone()[0]
+        _log(f"prepare: {split} rows={counts[split]:,}")
 
     train_file = _quoted(prepared_dir / "train" / "*.parquet")
+    _log("prepare: building vocabularies from train split")
     card_ids = [
         row[0]
         for row in connection.execute(
@@ -110,6 +121,7 @@ def prepare_splits(config: AppConfig, overwrite: bool = False) -> dict[str, Any]
     )
     # Per-card train frequency, for inverse-frequency loss weighting: rare cards
     # are under-sampled, so without this the model just learns the popular meta.
+    _log("prepare: counting per-card train frequencies")
     card_counts = {
         str(row[0]): int(row[1])
         for row in connection.execute(
@@ -136,4 +148,5 @@ def prepare_splits(config: AppConfig, overwrite: bool = False) -> dict[str, Any]
         json.dumps(manifest, indent=2), encoding="utf-8"
     )
     connection.close()
+    _log("prepare: done")
     return manifest
