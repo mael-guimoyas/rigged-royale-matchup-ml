@@ -31,15 +31,9 @@ log_step "Installing Python package"
 python -m venv --system-site-packages "$VENV_DIR"
 source "$VENV_DIR/bin/activate"
 python -m pip install --upgrade pip
-# uv resolves/installs ~10-30x faster than pip. Fall back to pip if uv fails so
-# the run never gets stuck on the install step. Install runtime deps only (no
-# [dev]); torch is reused from the base image via --system-site-packages.
-if python -m pip install --upgrade uv && python -m uv pip install -e .; then
-  log_step "Installed with uv"
-else
-  log_step "uv unavailable or failed; falling back to pip"
-  python -m pip install -e .
-fi
+# Install runtime deps only (no [dev]); torch is reused from the base image via
+# --system-site-packages, so it is not re-downloaded.
+python -m pip install -e .
 
 log_step "Writing RunPod config"
 python - <<'PY'
