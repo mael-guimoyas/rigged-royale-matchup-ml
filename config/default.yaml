@@ -87,7 +87,7 @@ training:
   # the popular meta. Weight per sample = mean rarity of its 16 cards, normalised
   # so the average weight stays 1. power = how aggressive; cap bounds rare boosts.
   loss_card_frequency_weighting: true
-  loss_frequency_power: 0.5
+  loss_frequency_power: 0.3
   loss_frequency_cap: 5.0
 
 evaluation:
