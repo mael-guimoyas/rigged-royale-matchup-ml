@@ -260,7 +260,12 @@ class BatchedMatchupIterableDataset(IterableDataset):
         augment_swap: bool,
         seed: int,
         batch_size: int,
-        scan_batch_size: int = 65_536,
+        # Must divide prepare's parquet row_group_size (100_000) so every scanned
+        # record batch is the same size; that keeps the record-batch modulo
+        # sharding in __iter__ balanced ~evenly across DataLoader workers. A
+        # non-divisor (e.g. 65_536) yields alternating big/small batches and skews
+        # the split (~65/35 with 2 workers).
+        scan_batch_size: int = 25_000,
     ) -> None:
         super().__init__()
         self.split_dir = split_dir
@@ -274,33 +279,46 @@ class BatchedMatchupIterableDataset(IterableDataset):
 
     def _fragments(self) -> list:
         dataset = pads.dataset(self.split_dir, format="parquet")
-        fragments = list(dataset.get_fragments())
-        worker = get_worker_info()
-        if worker is not None:
-            fragments = fragments[worker.id :: worker.num_workers]
-        return fragments
+        return list(dataset.get_fragments())
 
     def __iter__(self) -> Iterator[dict[str, torch.Tensor]]:
         worker = get_worker_info()
+        num_workers = worker.num_workers if worker else 1
+        worker_id = worker.id if worker else 0
         # Vary the seed per epoch so shuffling and swap augmentation differ across
         # epochs instead of repeating the exact same order every pass.
         epoch = self._epoch
         self._epoch += 1
-        worker_seed = self.seed + (worker.id if worker else 0) + epoch * 100_003
-        rng = random.Random(worker_seed)
+        # `order_rng` is seeded identically across workers so every worker walks
+        # the fragments (and thus the global record-batch sequence) in the same
+        # order — the modulo sharding below then partitions batches with no
+        # overlap or gaps. `aug_rng` is per-worker so row shuffling and swap
+        # augmentation still vary between workers.
+        order_rng = random.Random(self.seed + epoch * 100_003)
+        aug_rng = random.Random(self.seed + epoch * 100_003 + 1 + worker_id)
         fragments = self._fragments()
         if self.shuffle:
-            rng.shuffle(fragments)
+            order_rng.shuffle(fragments)
+        # Shard at record-batch granularity, not per-fragment: a freshly-prepared
+        # split is often a single parquet file, so fragment-level sharding would
+        # starve every worker but one. Each worker C++-decodes all batches (cheap)
+        # but only Python-encodes the ~1/num_workers it owns (the real cost), so
+        # the encode load spreads across CPU cores and the GPUs stay fed.
+        batch_index = 0
         for fragment in fragments:
             scanner = fragment.scanner(columns=FEATURE_COLUMNS, batch_size=self.scan_batch_size)
             for record_batch in scanner.to_batches():
+                if batch_index % num_workers != worker_id:
+                    batch_index += 1
+                    continue
+                batch_index += 1
                 rows = record_batch.to_pylist()
                 if self.shuffle:
-                    rng.shuffle(rows)
+                    aug_rng.shuffle(rows)
                 for offset in range(0, len(rows), self.batch_size):
                     batch_rows = rows[offset : offset + self.batch_size]
                     swapped = (
-                        [rng.random() < 0.5 for _ in batch_rows]
+                        [aug_rng.random() < 0.5 for _ in batch_rows]
                         if self.augment_swap
                         else None
                     )
