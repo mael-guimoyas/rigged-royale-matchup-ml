@@ -188,10 +188,17 @@ def pull_storage(
     overwrite: bool = typer.Option(
         False, help="Re-download shards that already exist locally."
     ),
+    workers: int = typer.Option(
+        8, help="Parallel Storage downloads. Try 8-16 on RunPod."
+    ),
 ) -> None:
     """Download training Parquet shards from Supabase Storage into data/raw."""
     result = download_from_storage(
-        load_config(config), bucket=bucket, prefix=prefix, overwrite=overwrite
+        load_config(config),
+        bucket=bucket,
+        prefix=prefix,
+        overwrite=overwrite,
+        workers=workers,
     )
     typer.echo(json.dumps(result, indent=2))
 

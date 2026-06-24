@@ -78,7 +78,8 @@ if [[ ! -f "$PREPARED_DIR/manifest.json" ]]; then
   if [[ -n "${SUPABASE_URL:-}" && -n "${SUPABASE_SECRET_KEY:-}" ]]; then
     rigged-matchup pull-storage --config "$CONFIG_PATH" \
       --bucket "${TRAINING_BUCKET:-training-battles}" \
-      --prefix "${TRAINING_PREFIX:-battles}"
+      --prefix "${TRAINING_PREFIX:-battles}" \
+      --workers "${STORAGE_DOWNLOAD_WORKERS:-16}"
     rigged-matchup prepare --config "$CONFIG_PATH" --overwrite
   else
     echo "Missing $PREPARED_DIR/manifest.json."

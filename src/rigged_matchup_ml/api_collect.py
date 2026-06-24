@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import shutil
 import sys
 import threading
 import time
@@ -23,7 +24,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections import Counter, deque
-from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, as_completed, wait
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
@@ -510,12 +511,23 @@ class StorageClient:
         with urllib.request.urlopen(request, timeout=120) as response:
             return response.read()
 
+    def download_to_path(self, object_name: str, destination: Path) -> None:
+        request = urllib.request.Request(
+            f"{self._url}/storage/v1/object/{self._bucket}/"
+            f"{urllib.parse.quote(self._object_path(object_name))}",
+            headers=self._headers(),
+        )
+        with urllib.request.urlopen(request, timeout=300) as response:
+            with destination.open("wb") as handle:
+                shutil.copyfileobj(response, handle)
+
 
 def download_from_storage(
     config: AppConfig,
     bucket: str = "training-battles",
     prefix: str = "battles",
     overwrite: bool = False,
+    workers: int = 8,
 ) -> dict[str, Any]:
     """Download training Parquet shards from Supabase Storage into data/raw.
 
@@ -534,16 +546,29 @@ def download_from_storage(
         "skipped_existing": 0,
         "raw_dir": str(raw_dir),
         "bucket": bucket,
+        "prefix": prefix,
+        "workers": max(1, workers),
     }
-    for name in tqdm(names, desc="Storage download", unit="file"):
+
+    def download_one(name: str) -> str:
         destination = raw_dir / Path(name).name
         if destination.exists() and not overwrite:
-            summary["skipped_existing"] += 1
-            continue
+            return "skipped_existing"
         temporary = destination.with_suffix(destination.suffix + ".tmp")
-        temporary.write_bytes(client.download(name))
+        client.download_to_path(name, temporary)
         temporary.replace(destination)
-        summary["downloaded"] += 1
+        return "downloaded"
+
+    worker_count = max(1, int(workers))
+    if worker_count == 1:
+        for name in tqdm(names, desc="Storage download", unit="file"):
+            summary[download_one(name)] += 1
+        return summary
+
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = [executor.submit(download_one, name) for name in names]
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Storage download", unit="file"):
+            summary[future.result()] += 1
     return summary
 
 
