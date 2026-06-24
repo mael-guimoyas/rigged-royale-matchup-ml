@@ -1,5 +1,5 @@
 param(
-  [string]$OutputPath = "artifacts\runpod-bundle.zip"
+  [string]$OutputPath = "artifacts\runpod-bundle.tar.gz"
 )
 
 $ErrorActionPreference = "Stop"
@@ -50,7 +50,14 @@ try {
   if (Test-Path $outputFullPath) {
     Remove-Item -LiteralPath $outputFullPath -Force
   }
-  Compress-Archive -Path (Join-Path $stageRoot "*") -DestinationPath $outputFullPath -CompressionLevel Optimal
+  $tar = Get-Command tar.exe -ErrorAction SilentlyContinue
+  if ($null -eq $tar) {
+    throw "tar.exe not found. Install 7-Zip, or run this script on Windows 10/11 where tar.exe is bundled."
+  }
+  & $tar.Source -czf $outputFullPath -C $stageRoot "rigged-royale-matchup-ml"
+  if ($LASTEXITCODE -ne 0) {
+    throw "tar.exe failed with exit code $LASTEXITCODE"
+  }
 
   $sizeGb = [math]::Round((Get-Item -LiteralPath $outputFullPath).Length / 1GB, 2)
   Write-Host "Created $outputFullPath ($sizeGb GB)"
