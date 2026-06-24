@@ -372,6 +372,15 @@ def train_model(config: AppConfig) -> Path:
         card2vec_dir = config.resolve(card2vec_dir) if card2vec_dir else prepared_dir
         status = _maybe_init_card2vec(model, card2vec_dir, device)
         print(json.dumps({"card2vec_init": status}))
+    # Wrap for multi-GPU (e.g. Kaggle T4 x2). DataParallel splits each batch
+    # across GPUs and gathers the result, so the effective batch size — and thus
+    # the LR schedule and steps/epoch — is unchanged; only throughput rises.
+    # `base_model` keeps a handle to the unwrapped module so state_dict save/load
+    # stays free of the `module.` prefix and remains serving-compatible.
+    base_model = model
+    if device.type == "cuda" and torch.cuda.device_count() > 1:
+        model = nn.DataParallel(model)
+        print(json.dumps({"data_parallel_gpus": torch.cuda.device_count()}))
     train_loader = _loader(prepared_dir, "train", vocabulary, config, training=True)
     validation_loader = _loader(prepared_dir, "validation", vocabulary, config, training=False)
     optimizer_options = {
@@ -473,7 +482,7 @@ def train_model(config: AppConfig) -> Path:
         print(json.dumps({"epoch": epoch + 1, "validation": val_metrics}, indent=2))
         if val_metrics["log_loss"] < best_loss:
             best_loss = val_metrics["log_loss"]
-            best_state = {key: value.detach().cpu() for key, value in model.state_dict().items()}
+            best_state = {key: value.detach().cpu() for key, value in base_model.state_dict().items()}
             patience = 0
         else:
             patience += 1
@@ -482,7 +491,7 @@ def train_model(config: AppConfig) -> Path:
 
     if best_state is None:
         raise RuntimeError("Training did not produce a checkpoint")
-    model.load_state_dict(best_state)
+    base_model.load_state_dict(best_state)
     model.to(device)
     val_logits, _, val_targets, val_segments = collect_predictions_with_segments(
         model, validation_loader, device, vocabulary, temperature=1.0
