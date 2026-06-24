@@ -1,11 +1,17 @@
 from collections import Counter
 
+import pytest
+
+import rigged_matchup_ml.api_collect as api_collect
 from rigged_matchup_ml.api_collect import (
     BalancedFrontier,
+    ClashRoyaleClient,
+    RateLimiter,
     _battle_fingerprint,
     _ladder_bucket_label,
     _normalize_baseline,
     _opponent_candidates,
+    _resolve_cr_api_tokens,
     _segment_tracked,
     league_from_profile,
     mode_key_for,
@@ -32,6 +38,104 @@ def _battle(battle_type: str = "pathOfLegend") -> dict:
 def test_normalize_tag() -> None:
     assert normalize_tag(" #abc ") == "#ABC"
     assert normalize_tag("abc") == "#ABC"
+
+
+def test_resolve_cr_api_tokens_selects_primary_secondary_or_both(monkeypatch) -> None:
+    monkeypatch.setenv("CR_API_TOKEN", " token-one ")
+    monkeypatch.setenv("CR_API_TOKEN2", "\"token two\"")
+
+    assert _resolve_cr_api_tokens("1") == [("CR_API_TOKEN", "token-one")]
+    assert _resolve_cr_api_tokens("2") == [("CR_API_TOKEN2", "tokentwo")]
+    assert _resolve_cr_api_tokens("both") == [
+        ("CR_API_TOKEN", "token-one"),
+        ("CR_API_TOKEN2", "tokentwo"),
+    ]
+
+
+def test_resolve_cr_api_tokens_requires_requested_key(monkeypatch) -> None:
+    monkeypatch.setenv("CR_API_TOKEN", "token-one")
+    monkeypatch.delenv("CR_API_TOKEN2", raising=False)
+
+    with pytest.raises(RuntimeError, match="CR_API_TOKEN2"):
+        _resolve_cr_api_tokens("2")
+
+    with pytest.raises(ValueError, match="1, 2, both"):
+        _resolve_cr_api_tokens("bad")
+
+
+def test_clash_royale_client_round_robins_both_tokens(monkeypatch) -> None:
+    requests = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return b"{}"
+
+    def fake_urlopen(request, timeout):
+        requests.append(request)
+        return Response()
+
+    monkeypatch.setenv("CR_API_TOKEN", "token-one")
+    monkeypatch.setenv("CR_API_TOKEN2", "token-two")
+    monkeypatch.setenv("CR_API_BASE_URL", "https://example.test/v1")
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    client = ClashRoyaleClient(RateLimiter(1_000_000), token_mode="both")
+    client.player("#AAA")
+    client.player("#BBB")
+
+    assert [request.get_header("Authorization") for request in requests] == [
+        "Bearer token-one",
+        "Bearer token-two",
+    ]
+    assert client.token_stats == {
+        "CR_API_TOKEN": {"requests": 1, "rate_limited": 0, "errors": 0},
+        "CR_API_TOKEN2": {"requests": 1, "rate_limited": 0, "errors": 0},
+    }
+
+
+def test_clash_royale_client_both_shares_total_request_rate(monkeypatch) -> None:
+    limiters = []
+
+    class RecordingLimiter:
+        def __init__(self, requests_per_second):
+            self.requests_per_second = requests_per_second
+            self.acquired = 0
+            limiters.append(self)
+
+        def acquire(self):
+            self.acquired += 1
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return b"{}"
+
+    monkeypatch.setenv("CR_API_TOKEN", "token-one")
+    monkeypatch.setenv("CR_API_TOKEN2", "token-two")
+    monkeypatch.setenv("CR_API_BASE_URL", "https://example.test/v1")
+    monkeypatch.setattr(api_collect, "RateLimiter", RecordingLimiter)
+    monkeypatch.setattr("urllib.request.urlopen", lambda request, timeout: Response())
+
+    client = ClashRoyaleClient(
+        token_mode="both",
+        requests_per_second=30.0,
+    )
+    client.player("#AAA")
+    client.player("#BBB")
+
+    assert [limiter.requests_per_second for limiter in limiters] == [30.0]
+    assert [limiter.acquired for limiter in limiters] == [2]
 
 
 def test_mode_key_for_ranked_and_ladder() -> None:

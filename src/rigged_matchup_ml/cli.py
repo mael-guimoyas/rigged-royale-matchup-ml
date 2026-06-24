@@ -83,6 +83,24 @@ def collect_api(
         help="Steer the crawl toward trophy bands under-represented on disk "
         "(scans existing shards at startup to find the gaps).",
     ),
+    api_token_mode: str = typer.Option(
+        "1",
+        "--api-token-mode",
+        help="CR API token selection: 1=CR_API_TOKEN, 2=CR_API_TOKEN2, "
+        "both=round-robin across both under the same total request rate.",
+    ),
+    progress: bool = typer.Option(
+        True,
+        "--progress/--no-progress",
+        help="Render the live tqdm progress bar. Disable it for background runs "
+        "inside the IDE terminal.",
+    ),
+    stats_interval: float = typer.Option(
+        10.0,
+        "--stats-interval",
+        help="Seconds between lightweight status lines when --no-progress is used "
+        "(0 disables).",
+    ),
 ) -> None:
     """Fetch battles from the Clash Royale API into training Parquet (local + Storage)."""
     if tags_file is not None and not tags_file.exists():
@@ -91,6 +109,9 @@ def collect_api(
         raise typer.BadParameter(
             "Provide a seed: --tags-file <file> or --from-supabase <N>."
         )
+    api_token_mode = api_token_mode.strip().lower()
+    if api_token_mode not in {"1", "2", "both"}:
+        raise typer.BadParameter("--api-token-mode must be one of: 1, 2, both.")
     result = collect_from_api(
         load_config(config),
         tags_file=tags_file,
@@ -105,6 +126,9 @@ def collect_api(
         prefix=prefix,
         min_trophies=min_trophies,
         balance=balance,
+        api_token_mode=api_token_mode,
+        show_progress=progress,
+        stats_interval_seconds=stats_interval,
     )
     typer.echo(json.dumps(result, indent=2))
 

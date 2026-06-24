@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import sys
 import threading
 import time
 import urllib.error
@@ -42,6 +43,7 @@ DEFAULT_BASE_URL = "https://proxy.royaleapi.dev/v1"
 # The RoyaleAPI proxy sits behind Cloudflare, which rejects the default
 # "Python-urllib/x" User-Agent with error 1010. A normal UA is required.
 USER_AGENT = "rigged-royale-matchup-ml/0.1 (+https://github.com/riggedroyale)"
+CR_API_TOKEN_ENVS = ("CR_API_TOKEN", "CR_API_TOKEN2")
 RANKED_BATTLE_TYPES = {"pathoflegend", "pathoflegends"}
 LADDER_BATTLE_TYPES = {"pvp"}
 
@@ -77,6 +79,30 @@ def normalize_tag(tag: str) -> str:
 
 def _encode_tag(tag: str) -> str:
     return urllib.parse.quote(normalize_tag(tag), safe="")
+
+
+def _clean_env_token(value: str | None) -> str:
+    return (value or "").strip().strip("\"'").replace(" ", "")
+
+
+def _resolve_cr_api_tokens(token_mode: str = "1") -> list[tuple[str, str]]:
+    normalized = token_mode.strip().lower()
+    if normalized == "1":
+        env_names = (CR_API_TOKEN_ENVS[0],)
+    elif normalized == "2":
+        env_names = (CR_API_TOKEN_ENVS[1],)
+    elif normalized == "both":
+        env_names = CR_API_TOKEN_ENVS
+    else:
+        raise ValueError("api token mode must be one of: 1, 2, both")
+
+    tokens: list[tuple[str, str]] = []
+    for env_name in env_names:
+        token = _clean_env_token(os.getenv(env_name))
+        if not token:
+            raise RuntimeError(f"{env_name} is missing in .env")
+        tokens.append((env_name, token))
+    return tokens
 
 
 def mode_key_for(battle: dict[str, Any]) -> str:
@@ -293,35 +319,62 @@ class BalancedFrontier:
 
 
 class ClashRoyaleClient:
-    def __init__(self, limiter: RateLimiter, max_retries: int = 4) -> None:
-        token = (os.getenv("CR_API_TOKEN") or "").strip().strip("\"'").replace(" ", "")
-        if not token:
-            raise RuntimeError("CR_API_TOKEN is missing in .env")
-        self._token = token
+    def __init__(
+        self,
+        limiter: RateLimiter | None = None,
+        max_retries: int = 4,
+        token_mode: str = "1",
+        requests_per_second: float = 30.0,
+    ) -> None:
+        self._tokens = _resolve_cr_api_tokens(token_mode)
+        self._token_index = 0
         self._base_url = (os.getenv("CR_API_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
-        self._limiter = limiter
+        shared_limiter = limiter or RateLimiter(requests_per_second)
+        self._limiters = {name: shared_limiter for name, _ in self._tokens}
         self._max_retries = max_retries
         self._stats_lock = threading.Lock()
+        self._token_stats: dict[str, dict[str, int]] = {
+            name: {"requests": 0, "rate_limited": 0, "errors": 0}
+            for name, _ in self._tokens
+        }
         self.requests = 0
         self.rate_limited = 0
         self.errors = 0
 
-    def _bump(self, field: str) -> None:
+    @property
+    def token_names(self) -> list[str]:
+        return [name for name, _ in self._tokens]
+
+    @property
+    def token_stats(self) -> dict[str, dict[str, int]]:
+        with self._stats_lock:
+            return {name: stats.copy() for name, stats in self._token_stats.items()}
+
+    def _next_token(self) -> tuple[str, str]:
+        with self._stats_lock:
+            token = self._tokens[self._token_index]
+            self._token_index = (self._token_index + 1) % len(self._tokens)
+            return token
+
+    def _bump(self, field: str, token_name: str | None = None) -> None:
         with self._stats_lock:
             setattr(self, field, getattr(self, field) + 1)
+            if token_name is not None:
+                self._token_stats[token_name][field] += 1
 
     def _get(self, path: str) -> Any | None:
-        request = urllib.request.Request(
-            f"{self._base_url}{path}",
-            headers={
-                "Authorization": f"Bearer {self._token}",
-                "Accept": "application/json",
-                "User-Agent": USER_AGENT,
-            },
-        )
         for attempt in range(self._max_retries):
-            self._limiter.acquire()
-            self._bump("requests")
+            token_name, token = self._next_token()
+            request = urllib.request.Request(
+                f"{self._base_url}{path}",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/json",
+                    "User-Agent": USER_AGENT,
+                },
+            )
+            self._limiters[token_name].acquire()
+            self._bump("requests", token_name)
             try:
                 with urllib.request.urlopen(request, timeout=20) as response:
                     return json.loads(response.read().decode("utf-8"))
@@ -329,7 +382,7 @@ class ClashRoyaleClient:
                 if error.code == 404:
                     return None
                 if error.code == 429:
-                    self._bump("rate_limited")
+                    self._bump("rate_limited", token_name)
                     if attempt < self._max_retries - 1:
                         # Fastest legal retry: honor the API's own
                         # x-ratelimit-retry-after (microseconds) so we wake the
@@ -350,13 +403,13 @@ class ClashRoyaleClient:
                 if error.code in (500, 502, 503, 504) and attempt < self._max_retries - 1:
                     time.sleep(2.0 * (attempt + 1))
                     continue
-                self._bump("errors")
+                self._bump("errors", token_name)
                 raise
             except (urllib.error.URLError, TimeoutError):
                 if attempt < self._max_retries - 1:
                     time.sleep(2.0 * (attempt + 1))
                     continue
-                self._bump("errors")
+                self._bump("errors", token_name)
                 raise
         return None
 
@@ -604,6 +657,9 @@ def collect_from_api(
     shard_size: int = 50_000,
     min_trophies: int | None = None,
     balance: bool = True,
+    api_token_mode: str = "1",
+    show_progress: bool = True,
+    stats_interval_seconds: float = 10.0,
 ) -> dict[str, Any]:
     load_dotenv(config.resolve(".env"))
     seeds = _seed_tags(config, tags_file, from_supabase)
@@ -618,8 +674,11 @@ def collect_from_api(
 
     raw_dir = config.resolve(config.data["raw_dir"])
     raw_dir.mkdir(parents=True, exist_ok=True)
-    limiter = RateLimiter(requests_per_second)
-    client = ClashRoyaleClient(limiter)
+    client = ClashRoyaleClient(
+        token_mode=api_token_mode,
+        requests_per_second=requests_per_second,
+    )
+    effective_workers = workers
     uploader = StorageClient(bucket, prefix, create=True) if upload else None
     deduplicator = Deduplicator(config.resolve(config.data["dedup_db"]))
     allowed_modes = set(config.data.get("allowed_modes") or [])
@@ -649,10 +708,16 @@ def collect_from_api(
         "candidates_skipped_low": 0,
         "min_trophies": min_trophies,
         "balance": balance,
+        "api_token_mode": api_token_mode,
+        "api_token_envs": client.token_names,
+        "requests_per_second_total": requests_per_second,
+        "effective_workers": effective_workers,
+        "progress": show_progress,
+        "stats_interval_seconds": stats_interval_seconds,
     }
     run_by_segment: Counter[str] = Counter()
-    progress = tqdm(desc="CR API players", unit="player")
-    if balance and baseline_counts:
+    progress = tqdm(desc="CR API players", unit="player", disable=not show_progress)
+    if show_progress and balance and baseline_counts:
         top = ", ".join(
             f"{seg}={count:,}"
             for seg, count in sorted(baseline_counts.items(), key=lambda kv: -kv[1])[:6]
@@ -680,8 +745,12 @@ def collect_from_api(
     # Continuous dispatch: keep ~2x workers requests in flight and refill as each
     # finishes, so a slow or retrying player never stalls the others (a fixed-size
     # batch barrier wastes the pool on the slowest player in every round).
-    target_inflight = max(workers * 2, workers + 4)
+    target_inflight = max(effective_workers * 2, effective_workers + 4)
     submitted = 0
+    started_at = time.perf_counter()
+    last_stats_at = started_at
+    last_stats_requests = 0
+    last_stats_players = 0
 
     def can_submit() -> bool:
         if max_players is not None and submitted >= max_players:
@@ -690,8 +759,40 @@ def collect_from_api(
             return False
         return frontier.queue_size() > 0
 
+    def maybe_emit_status() -> None:
+        nonlocal last_stats_at, last_stats_requests, last_stats_players
+        if show_progress or stats_interval_seconds <= 0:
+            return
+        now = time.perf_counter()
+        interval = now - last_stats_at
+        if interval < stats_interval_seconds:
+            return
+        elapsed = max(now - started_at, 1e-9)
+        total_rps = client.requests / elapsed
+        recent_rps = (client.requests - last_stats_requests) / max(interval, 1e-9)
+        recent_players = (
+            summary["players_processed"] - last_stats_players
+        ) / max(interval, 1e-9)
+        print(
+            "CR API "
+            f"elapsed={elapsed:,.0f}s "
+            f"players={summary['players_processed']:,} "
+            f"players/s={recent_players:.2f} "
+            f"requests={client.requests:,} "
+            f"req/s={recent_rps:.2f} "
+            f"avg_req/s={total_rps:.2f} "
+            f"accepted={summary['battles_accepted']:,} "
+            f"queued={frontier.queue_size():,} "
+            f"429={client.rate_limited:,}",
+            file=sys.stderr,
+            flush=True,
+        )
+        last_stats_at = now
+        last_stats_requests = client.requests
+        last_stats_players = summary["players_processed"]
+
     try:
-        with ThreadPoolExecutor(max_workers=workers) as executor:
+        with ThreadPoolExecutor(max_workers=effective_workers) as executor:
             inflight: dict[Future, str] = {}
 
             def fill() -> None:
@@ -730,10 +831,13 @@ def collect_from_api(
                         summary["candidates_skipped_low"] += frontier.add(candidates)
                     if len(buffer) >= shard_size:
                         flush()
-                    progress.update(1)
-                    progress.set_postfix(
-                        accepted=summary["battles_accepted"], queued=frontier.queue_size()
-                    )
+                    if show_progress:
+                        progress.update(1)
+                        progress.set_postfix(
+                            accepted=summary["battles_accepted"],
+                            queued=frontier.queue_size(),
+                        )
+                    maybe_emit_status()
                 fill()
         flush()
     finally:
@@ -743,6 +847,7 @@ def collect_from_api(
     summary["requests"] = client.requests
     summary["rate_limited"] = client.rate_limited
     summary["request_errors"] = client.errors
+    summary["api_token_stats"] = client.token_stats
     summary["bucket"] = bucket if upload else None
     summary["raw_dir"] = str(raw_dir)
     summary["accepted_by_segment"] = dict(run_by_segment)

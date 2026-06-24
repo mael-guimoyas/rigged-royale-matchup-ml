@@ -108,12 +108,26 @@ récupère les battlelogs directement depuis l'API CR et écrit des shards Parqu
 prêts pour l'entraînement (mêmes colonnes que `extract`), localement et/ou dans
 Supabase Storage.
 
-Variables `.env` requises : `CR_API_TOKEN` (+ `CR_API_BASE_URL` = proxy RoyaleAPI). Pour
+Variables `.env` requises : `CR_API_TOKEN` (+ `CR_API_BASE_URL` = proxy RoyaleAPI).
+`CR_API_TOKEN2` est optionnel pour tester si la limite est par IP ou par cle. Pour
 l'upload Storage : `SUPABASE_URL` et `SUPABASE_SECRET_KEY`. Copie-les depuis le repo app.
 
 ```powershell
 # Test court : amorce 20 joueurs déjà connus dans Supabase, local seulement.
 rigged-matchup collect-api --from-supabase 20 --max-players 50
+
+# Utiliser la deuxieme cle, ou alterner entre les deux cles.
+rigged-matchup collect-api --from-supabase 20 --max-players 50 --api-token-mode 2
+rigged-matchup collect-api --from-supabase 20 --max-players 50 --api-token-mode both
+
+# En mode both, --requests-per-second reste global:
+# ici le collecteur tente ~75 req/s au total, en alternant les deux cles
+# pour lisser la charge sur CR_API_TOKEN et CR_API_TOKEN2.
+rigged-matchup collect-api --tags-file seeds.txt --requests-per-second 75 --workers 22 --max-battles 50000000 --api-token-mode both
+
+# Si la commande tourne dans un terminal d'IDE en arriere-plan, coupe la barre
+# de progression et garde seulement une ligne de stats toutes les 10 secondes.
+rigged-matchup collect-api --tags-file seeds.txt --requests-per-second 75 --workers 22 --max-battles 50000000 --api-token-mode both --no-progress --stats-interval 10
 
 # Prod : amorce 500 joueurs, étend via les adversaires, upload dans Storage.
 rigged-matchup collect-api --from-supabase 500 --upload --max-battles 200000

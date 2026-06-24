@@ -30,6 +30,18 @@ FEATURE_COLUMNS = [
 ]
 
 
+def _fragments_by_row_group(split_dir: Path) -> list:
+    fragments = []
+    for fragment in pads.dataset(split_dir, format="parquet").get_fragments():
+        split_by_row_group = getattr(fragment, "split_by_row_group", None)
+        if split_by_row_group is None:
+            fragments.append(fragment)
+            continue
+        row_group_fragments = list(split_by_row_group())
+        fragments.extend(row_group_fragments or [fragment])
+    return fragments
+
+
 def load_vocabulary(prepared_dir: Path) -> dict[str, dict[str, int]]:
     return json.loads((prepared_dir / "vocabulary.json").read_text(encoding="utf-8"))
 
@@ -226,8 +238,7 @@ class MatchupIterableDataset(IterableDataset):
         self.scan_batch_size = scan_batch_size
 
     def _fragments(self) -> list:
-        dataset = pads.dataset(self.split_dir, format="parquet")
-        fragments = list(dataset.get_fragments())
+        fragments = _fragments_by_row_group(self.split_dir)
         worker = get_worker_info()
         if worker is not None:
             fragments = fragments[worker.id :: worker.num_workers]
@@ -273,8 +284,7 @@ class BatchedMatchupIterableDataset(IterableDataset):
         self._epoch = 0
 
     def _fragments(self) -> list:
-        dataset = pads.dataset(self.split_dir, format="parquet")
-        fragments = list(dataset.get_fragments())
+        fragments = _fragments_by_row_group(self.split_dir)
         worker = get_worker_info()
         if worker is not None:
             fragments = fragments[worker.id :: worker.num_workers]
