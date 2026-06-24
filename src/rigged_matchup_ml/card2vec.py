@@ -27,13 +27,57 @@ from .dataset import load_vocabulary
 _DECK_PAIRS = [(a, b) for a in range(8) for b in range(a + 1, 8)]
 
 
+def _build_vocab_lookup(card_vocab: dict[str, int]) -> tuple[np.ndarray, np.ndarray]:
+    """Sorted (raw_card_id, vocab_index) arrays for vectorised id mapping.
+
+    Raw Clash Royale card ids are sparse 8-digit numbers, so a dense lookup table
+    would waste hundreds of MB. ``searchsorted`` over the sorted key array maps a
+    whole batch of ids at once without any Python-level dict lookups.
+    """
+    keys = np.array(sorted(int(k) for k in card_vocab), dtype=np.int64)
+    vals = np.array([card_vocab[str(int(k))] for k in keys], dtype=np.int64)
+    return keys, vals
+
+
+def _map_ids(flat_ids: np.ndarray, keys: np.ndarray, vals: np.ndarray) -> np.ndarray:
+    """Map raw card ids -> vocab indices (0 for unknown), fully vectorised."""
+    pos = np.searchsorted(keys, flat_ids)
+    pos = np.clip(pos, 0, keys.size - 1)
+    matched = keys[pos] == flat_ids
+    return np.where(matched, vals[pos], 0)
+
+
+def _batch_card_indices(
+    record_batch, column: str, card_vocab: dict[str, int], keys: np.ndarray, vals: np.ndarray
+) -> np.ndarray:
+    """Return (B, 8) vocab indices for a column, vectorised when decks are size 8.
+
+    Decks are guaranteed 8 cards when ``require_exactly_eight_cards`` is set, so the
+    Arrow list column flattens to a clean ``B*8`` child array we reshape in one shot.
+    Falls back to the per-row path for ragged batches.
+    """
+    col = record_batch.column(column)
+    flat = col.flatten().to_numpy(zero_copy_only=False).astype(np.int64, copy=False)
+    if flat.size == len(col) * 8:
+        return _map_ids(flat, keys, vals).reshape(len(col), 8)
+    return _decks_to_indices(col.to_pylist(), card_vocab)
+
+
 def _accumulate(cooccurrence: np.ndarray, deck_indices: np.ndarray) -> None:
-    """Add this batch of decks (B, 8 vocab indices) to the co-occurrence counts."""
-    for first, second in _DECK_PAIRS:
-        left = deck_indices[:, first]
-        right = deck_indices[:, second]
-        np.add.at(cooccurrence, (left, right), 1.0)
-        np.add.at(cooccurrence, (right, left), 1.0)
+    """Add a batch of decks (B, 8 vocab indices) to the co-occurrence counts.
+
+    Builds a binary multi-hot matrix ``M`` (B, n_cards) and adds ``M.T @ M``: entry
+    (i, j) becomes the number of decks containing both card i and card j. The matmul
+    runs in BLAS (multi-threaded, all cores) instead of millions of ``np.add.at``
+    scatter ops. The diagonal (self pairs) is dropped to match pairwise semantics.
+    """
+    size = cooccurrence.shape[0]
+    multi_hot = np.zeros((deck_indices.shape[0], size), dtype=np.float32)
+    rows = np.arange(deck_indices.shape[0])[:, None]
+    multi_hot[rows, deck_indices] = 1.0
+    batch_cooc = multi_hot.T @ multi_hot
+    np.fill_diagonal(batch_cooc, 0.0)
+    cooccurrence += batch_cooc
 
 
 def _decks_to_indices(decks: list[list[int]], card_vocab: dict[str, int]) -> np.ndarray:
@@ -94,6 +138,7 @@ def pretrain_card_embeddings(
     size = len(card_vocab) + 1
     cooccurrence = np.zeros((size, size), dtype=np.float64)
 
+    keys, vals = _build_vocab_lookup(card_vocab)
     dataset = pads.dataset(prepared_dir / "train", format="parquet")
     scanner = dataset.scanner(
         columns=["team_card_ids", "opponent_card_ids"], batch_size=65_536
@@ -102,11 +147,10 @@ def pretrain_card_embeddings(
     for record_batch in tqdm(
         scanner.to_batches(), desc="card2vec train scan", unit="batch"
     ):
-        teams = record_batch.column("team_card_ids").to_pylist()
-        opponents = record_batch.column("opponent_card_ids").to_pylist()
-        for decks in (teams, opponents):
-            _accumulate(cooccurrence, _decks_to_indices(decks, card_vocab))
-        scanned += len(teams)
+        for column in ("team_card_ids", "opponent_card_ids"):
+            indices = _batch_card_indices(record_batch, column, card_vocab, keys, vals)
+            _accumulate(cooccurrence, indices)
+        scanned += record_batch.num_rows
         if max_rows is not None and scanned >= max_rows:
             break
 
@@ -131,7 +175,9 @@ def write_card_frequencies(config: AppConfig, output_dir: Path | None = None) ->
     prepared_dir = config.resolve(config.data["prepared_dir"])
     destination = output_dir or prepared_dir
     destination.mkdir(parents=True, exist_ok=True)
-    counts: dict[str, int] = {}
+    card_vocab = load_vocabulary(prepared_dir)["cards"]
+    keys, vals = _build_vocab_lookup(card_vocab)
+    totals = np.zeros(len(card_vocab) + 1, dtype=np.int64)
     dataset = pads.dataset(prepared_dir / "train", format="parquet")
     scanner = dataset.scanner(
         columns=["team_card_ids", "opponent_card_ids"], batch_size=65_536
@@ -140,10 +186,12 @@ def write_card_frequencies(config: AppConfig, output_dir: Path | None = None) ->
         scanner.to_batches(), desc="card frequencies train scan", unit="batch"
     ):
         for column in ("team_card_ids", "opponent_card_ids"):
-            for deck in record_batch.column(column).to_pylist():
-                for card in deck:
-                    key = str(card)
-                    counts[key] = counts.get(key, 0) + 1
+            col = record_batch.column(column)
+            flat = col.flatten().to_numpy(zero_copy_only=False).astype(np.int64, copy=False)
+            idx = _map_ids(flat, keys, vals)
+            totals += np.bincount(idx, minlength=totals.size)
+    # Re-key by raw card id (index 0 is padding/unknown and is dropped).
+    counts = {str(int(raw)): int(totals[idx]) for raw, idx in zip(keys, vals) if totals[idx] > 0}
     (destination / "card_frequencies.json").write_text(
         json.dumps(counts, indent=2, sort_keys=True), encoding="utf-8"
     )
