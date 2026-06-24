@@ -547,6 +547,36 @@ def download_from_storage(
     return summary
 
 
+def upload_to_storage(
+    config: AppConfig,
+    bucket: str = "training-battles",
+    prefix: str = "battles",
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    """Upload local training Parquet shards from data/raw to Supabase Storage."""
+    load_dotenv(config.resolve(".env"))
+    raw_dir = config.resolve(config.data["raw_dir"])
+    paths = sorted(raw_dir.glob("*.parquet"))
+    client = StorageClient(bucket, prefix, create=True)
+    existing = set() if overwrite else set(client.list_objects())
+    summary = {
+        "local_files": len(paths),
+        "uploaded": 0,
+        "skipped_existing": 0,
+        "raw_dir": str(raw_dir),
+        "bucket": bucket,
+        "prefix": prefix,
+    }
+    for path in tqdm(paths, desc="Storage upload", unit="file"):
+        object_name = path.name
+        if object_name in existing:
+            summary["skipped_existing"] += 1
+            continue
+        client.upload(object_name, path.read_bytes())
+        summary["uploaded"] += 1
+    return summary
+
+
 def _seed_tags(
     config: AppConfig,
     tags_file: Path | None,

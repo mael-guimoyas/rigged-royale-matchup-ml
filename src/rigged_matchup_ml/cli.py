@@ -5,7 +5,7 @@ from pathlib import Path
 
 import typer
 
-from .api_collect import collect_from_api, download_from_storage
+from .api_collect import collect_from_api, download_from_storage, upload_to_storage
 from .benchmark import benchmark_model
 from .card2vec import pretrain_card_embeddings
 from .config import load_config
@@ -191,6 +191,22 @@ def pull_storage(
 ) -> None:
     """Download training Parquet shards from Supabase Storage into data/raw."""
     result = download_from_storage(
+        load_config(config), bucket=bucket, prefix=prefix, overwrite=overwrite
+    )
+    typer.echo(json.dumps(result, indent=2))
+
+
+@app.command("upload-storage")
+def upload_storage(
+    config: Path = DEFAULT_CONFIG,
+    bucket: str = typer.Option("training-battles", help="Storage bucket to upload to."),
+    prefix: str = typer.Option("battles", help="Object key prefix inside the bucket."),
+    overwrite: bool = typer.Option(
+        False, help="Overwrite objects that already exist in Storage."
+    ),
+) -> None:
+    """Upload local data/raw Parquet shards to Supabase Storage."""
+    result = upload_to_storage(
         load_config(config), bucket=bucket, prefix=prefix, overwrite=overwrite
     )
     typer.echo(json.dumps(result, indent=2))
