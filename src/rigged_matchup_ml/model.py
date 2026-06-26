@@ -24,6 +24,7 @@ class DeckEncoder(nn.Module):
         use_deck_transformer: bool = False,
         deck_transformer_heads: int = 4,
         deck_transformer_layers: int = 1,
+        use_card_importance: bool = False,
     ) -> None:
         super().__init__()
         self.max_evolution_level = max_evolution_level
@@ -60,6 +61,19 @@ class DeckEncoder(nn.Module):
                 nn.Dropout(dropout),
                 nn.Linear(hidden_dim // 2, metadata_embedding_dim),
             )
+        # Learned per-card importance from its metadata: a win condition should
+        # weigh more in the pooled deck and in the cross-deck "counter" terms than
+        # a support card or a defensive building. Initialised to output ~1.0 for
+        # every card (zero weight, bias = softplus^-1(1)), so the model starts as
+        # the uniform-mean baseline and learns the role hierarchy from win/loss.
+        # Needs metadata to read the role from; disabled when card_metadata_dim==0.
+        self.use_card_importance = bool(use_card_importance) and self.card_metadata_dim > 0
+        self.card_importance_head: nn.Module | None = None
+        if self.use_card_importance:
+            head = nn.Linear(self.card_metadata_dim, 1)
+            nn.init.zeros_(head.weight)
+            nn.init.constant_(head.bias, 0.5413)  # softplus(0.5413) ~= 1.0
+            self.card_importance_head = head
         self.tower_embedding = nn.Embedding(tower_count, embedding_dim // 2, padding_idx=0)
         card_input = embedding_dim + 4 * (embedding_dim // 4) + metadata_embedding_dim
         self.card_projection = nn.Sequential(
@@ -96,6 +110,22 @@ class DeckEncoder(nn.Module):
             self.deck_transformer = nn.TransformerEncoder(
                 deck_layer, num_layers=deck_transformer_layers, enable_nested_tensor=False
             )
+
+    def card_importance(
+        self,
+        card_metadata: torch.Tensor | None,
+        card_present: torch.Tensor,
+    ) -> torch.Tensor | None:
+        """Positive per-card importance weight ``(B, 8)`` from metadata, or None.
+
+        Padding positions get weight 0. Returns None when the importance head is
+        disabled or no metadata is available, so callers fall back to uniform.
+        """
+        if self.card_importance_head is None or card_metadata is None:
+            return None
+        present = card_present.bool().float()
+        raw = self.card_importance_head(card_metadata.float()).squeeze(-1)
+        return nn.functional.softplus(raw) * present
 
     def _archetype(self, card_features: torch.Tensor, card_mask: torch.Tensor) -> torch.Tensor:
         if self.deck_transformer is None or self.archetype_token is None:
@@ -160,7 +190,14 @@ class DeckEncoder(nn.Module):
         card_features = torch.cat(card_parts, dim=-1)
         card_features = self.card_projection(card_features) * mask
         card_mask = mask.squeeze(-1)
-        pooled = card_features.sum(dim=1) / mask.sum(dim=1).clamp_min(1)
+        importance = self.card_importance(card_metadata, card_present)
+        if importance is not None:
+            # Role-weighted deck pool: win conditions dominate the deck summary
+            # instead of every card contributing equally. Neutral at init (w~1).
+            weight = importance.unsqueeze(-1)
+            pooled = (card_features * weight).sum(dim=1) / weight.sum(dim=1).clamp_min(1e-6)
+        else:
+            pooled = card_features.sum(dim=1) / mask.sum(dim=1).clamp_min(1)
         deck_features = self.deck_projection(
             torch.cat([pooled, self.tower_embedding(tower)], dim=-1)
         )
@@ -279,6 +316,7 @@ class CardInteractionEncoder(nn.Module):
         second_cards: torch.Tensor,
         second_mask: torch.Tensor,
         return_weights: bool = False,
+        first_weights: torch.Tensor | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         # Flattened pair index is first * 8 + second, i.e. [source, target] when the
         # weights are viewed as (batch, 8, 8): row = first/source deck position,
@@ -304,6 +342,16 @@ class CardInteractionEncoder(nn.Module):
             assert self.cross_head_combine is not None
             pair_features = self.cross_head_combine(per_head)
         pair_mask = (first_mask[:, :, None] & second_mask[:, None, :]).flatten(1, 2)
+        if first_weights is not None:
+            # Weight each [source, target] pair by the source (first) card's
+            # importance: a counter to my win condition matters more than a
+            # counter to my support. Pair index = first * 8 + second, so the
+            # source weight broadcasts across the target axis. Neutral at init.
+            second_count = second_cards.shape[1]
+            source_weight = (
+                first_weights[:, :, None].expand(-1, -1, second_count).flatten(1, 2)
+            )
+            pair_features = pair_features * source_weight.unsqueeze(-1)
         return self.cross_pairs(pair_features, pair_mask, return_weights=return_weights)
 
     def within(
@@ -349,6 +397,7 @@ class SymmetricMatchupModel(nn.Module):
         deck_transformer_layers: int = 1,
         matrix_prior_learnable: bool = False,
         card_metadata_dim: int = CARD_METADATA_VECTOR_SIZE,
+        use_card_importance: bool = False,
     ) -> None:
         super().__init__()
         # logit(prior) is antisymmetric (prior swaps to 1-prior), so a scalar
@@ -381,6 +430,7 @@ class SymmetricMatchupModel(nn.Module):
             use_deck_transformer=use_deck_transformer,
             deck_transformer_heads=deck_transformer_heads,
             deck_transformer_layers=deck_transformer_layers,
+            use_card_importance=use_card_importance,
         )
         self.card_interactions = (
             CardInteractionEncoder(
@@ -638,11 +688,17 @@ class SymmetricMatchupModel(nn.Module):
         if self.use_cross_card_interactions:
             if self.card_interactions is None:
                 raise ValueError("Cross-card interactions are enabled but not initialized")
+            team_weights = self.deck_encoder.card_importance(team_metadata, team_present)
+            opponent_weights = self.deck_encoder.card_importance(
+                opponent_metadata, opponent_present
+            )
             team_to_opponent = self.card_interactions.cross(
-                team_cards, team_mask, opponent_cards, opponent_mask
+                team_cards, team_mask, opponent_cards, opponent_mask,
+                first_weights=team_weights,
             )
             opponent_to_team = self.card_interactions.cross(
-                opponent_cards, opponent_mask, team_cards, team_mask
+                opponent_cards, opponent_mask, team_cards, team_mask,
+                first_weights=opponent_weights,
             )
         team_matchup_summary = opponent_matchup_summary = None
         if self.use_matchup_transformer:

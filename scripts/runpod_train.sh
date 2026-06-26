@@ -70,6 +70,13 @@ if metadata_dim not in (None, ""):
     cfg.setdefault("model", {})["card_metadata_dim"] = int(metadata_dim)
     print(f"card_metadata_dim overridden -> {int(metadata_dim)}")
 
+# Ablation toggle: RUNPOD_CARD_IMPORTANCE=0 disables the learned role-importance
+# weighting (uniform deck pool + uniform cross terms) for an A/B comparison.
+card_importance = os.environ.get("RUNPOD_CARD_IMPORTANCE")
+if card_importance not in (None, ""):
+    cfg.setdefault("model", {})["use_card_importance"] = card_importance not in ("0", "false", "False")
+    print(f"use_card_importance overridden -> {cfg['model']['use_card_importance']}")
+
 config_path = Path(os.environ["CONFIG_PATH"])
 config_path.parent.mkdir(parents=True, exist_ok=True)
 with config_path.open("w", encoding="utf-8") as handle:

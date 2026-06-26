@@ -59,6 +59,10 @@ model:
   use_deck_transformer: true
   deck_transformer_heads: 4
   deck_transformer_layers: 1
+  # Learned per-card importance from the metadata: weights the deck pool and the
+  # cross-deck counter terms so a win condition (and a counter to it) outweighs a
+  # support card or defensive building. Neutral at init; needs card_metadata_dim>0.
+  use_card_importance: true
 
 training:
   seed: 42

@@ -92,6 +92,40 @@ def _reverse(original: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
     }
 
 
+def test_card_importance_builds_only_with_metadata() -> None:
+    kw = dict(use_cross_card_interactions=True, use_intra_deck_synergies=True, dropout=0.0)
+    on = SymmetricMatchupModel(32, 4, 3, 3, use_card_importance=True, **kw)
+    off = SymmetricMatchupModel(32, 4, 3, 3, use_card_importance=False, **kw)
+    dim0 = SymmetricMatchupModel(
+        32, 4, 3, 3, use_card_importance=True, card_metadata_dim=0, **kw
+    )
+    assert on.deck_encoder.card_importance_head is not None
+    assert off.deck_encoder.card_importance_head is None
+    # No metadata vector -> nothing to read a role from -> importance disabled.
+    assert dim0.deck_encoder.card_importance_head is None
+
+
+def test_card_importance_is_neutral_at_init_and_antisymmetric() -> None:
+    model = SymmetricMatchupModel(
+        32, 4, 3, 3,
+        dropout=0.0,
+        use_cross_card_interactions=True,
+        use_intra_deck_synergies=True,
+        use_card_importance=True,
+    )
+    model.eval()
+    b = batch()
+    weights = model.deck_encoder.card_importance(
+        b["team_card_metadata"], b["team_card_present"]
+    )
+    # Neutral init: every present card weighs ~1.0 (uniform-mean baseline).
+    assert torch.allclose(weights, torch.ones_like(weights), atol=1e-3)
+    with torch.no_grad():
+        p = model.probability(b).item()
+        pr = model.probability(_reverse(b)).item()
+    assert abs(p + pr - 1.0) < 1e-6
+
+
 def test_multihead_cross_and_deck_transformer_stay_antisymmetric() -> None:
     model = SymmetricMatchupModel(
         32,
