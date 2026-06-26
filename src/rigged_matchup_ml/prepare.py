@@ -38,27 +38,31 @@ def prepare_splits(config: AppConfig, overwrite: bool = False) -> dict[str, Any]
     validation_boundary = train_fraction + validation_fraction
     connection = duckdb.connect()
     connection.execute("set preserve_insertion_order=false")
+    # Let the dedup temp table spill to disk instead of OOM-ing on a RAM-limited
+    # Pod; the in-memory connection has no spill target otherwise.
+    connection.execute(f"set temp_directory='{_quoted(prepared_dir)}'")
     # Collect's SQLite dedup only spans a single collect run; if it was reset
     # between runs, the same game_id was written into multiple Storage shards.
     # pull-storage downloads them all, so dedup globally here (one row per
     # game_id) before splitting -- otherwise ~1M duplicate battles leak into
     # train/val/test. A duplicate game_id is the same battle (same battle_time),
     # so it always lands in the same split; deduping at read is safe.
+    # Materialize the deduped set ONCE into a temp table. A view would re-run
+    # the partition-by-game_id window over all rows on every reference (count,
+    # quantile, each split copy = ~5 full dedup passes over tens of millions of
+    # rows), which crawls and spills RAM. The table pays the window cost once.
     _log("prepare: deduplicating raw shards by game_id")
+    raw_total = connection.execute(
+        f"select count(*) from read_parquet('{raw_glob}')"
+    ).fetchone()[0]
     connection.execute(
         f"""
-        create temporary view raw_dedup as
+        create temporary table raw_dedup as
         select * from read_parquet('{raw_glob}')
         qualify row_number() over (partition by game_id order by inserted_at) = 1
         """
     )
-    raw_total, dedup_total = connection.execute(
-        f"""
-        select
-          (select count(*) from read_parquet('{raw_glob}')),
-          (select count(*) from raw_dedup)
-        """
-    ).fetchone()
+    dedup_total = connection.execute("select count(*) from raw_dedup").fetchone()[0]
     _log(
         f"prepare: rows raw={raw_total:,} unique={dedup_total:,} "
         f"duplicates_removed={raw_total - dedup_total:,}"
