@@ -9,9 +9,13 @@ offline environments like the Kaggle trainer).
 Source: RoyaleAPI cr-api-data (``json/cards.json``); ids match the battlelog
 ``id``. ``CHAMPION_CARD_IDS`` is every card with ``rarity == "Champion"`` and
 lets the HTTP server reconstruct the champion role at inference, since the site
-payload does not send card rarities. Regenerate with::
+payload does not send card rarities.
 
-    python scripts/refresh_card_stats.py
+Richer per-card gameplay metadata (role / flags / bucketed numerics) lives in the
+packaged ``card_metadata_snapshot.json`` and is exposed via ``metadata_for`` /
+``metadata_vector_for``. Regenerate the snapshot with::
+
+    python scripts/refresh_card_metadata.py
 """
 
 from __future__ import annotations
@@ -71,31 +75,44 @@ CHAMPION_CARD_IDS: frozenset[int] = frozenset(
 MAX_CARD_ELIXIR = 9
 
 CARD_METADATA_TYPE_NAMES: tuple[str, ...] = ("unknown", "troop", "building", "spell")
-CARD_METADATA_TAGS: tuple[str, ...] = (
+
+# Exactly one role tag per card (mutually exclusive primary function). Curated by
+# hand so the model can separate offensive win conditions from support / tank /
+# defensive pieces -- e.g. Knight is ``mini_tank``, never ``win_condition``.
+CARD_METADATA_ROLES: tuple[str, ...] = (
     "win_condition",
-    "support",
     "tank",
     "mini_tank",
-    "spell",
-    "building",
+    "support",
+    "dps",
+    "swarm",
+    "spawner_building",
+    "defensive_building",
+    "damage_spell",
+    "utility_spell",
+)
+# Boolean modifier flags; compose to express combos the user asked for, e.g.
+# ``tank`` + ``high_dps`` (tank+dps) or ``high_dps`` + ``splash`` (dps+splash).
+CARD_METADATA_FLAGS: tuple[str, ...] = (
     "splash",
     "air_target",
-    "ground_target",
-    "bait",
-    "cycle",
-    "building_chaser",
+    "flying",
+    "high_dps",
+    "reset_control",
     "spawner",
-    "swarm",
+    "building_target",
+    "champion",
 )
+CARD_METADATA_TAGS: tuple[str, ...] = (*CARD_METADATA_ROLES, *CARD_METADATA_FLAGS)
+# Bucketed (ordinal) numerics in [0, 1]; coarse on purpose so balance changes do
+# not invalidate the snapshot the way exact RoyaleAPI stats did.
 CARD_METADATA_NUMERIC_FEATURES: tuple[str, ...] = (
     "elixir",
     "hitpoints",
     "damage",
     "dps",
-    "hit_speed",
-    "range",
     "speed",
-    "radius",
+    "range",
 )
 CARD_METADATA_VECTOR_FIELDS: tuple[str, ...] = (
     *(f"type:{name}" for name in CARD_METADATA_TYPE_NAMES),
@@ -108,11 +125,9 @@ UNKNOWN_CARD_METADATA: dict[str, Any] = {
     "name": "<unknown>",
     "key": "<unknown>",
     "type": "unknown",
+    "role": "",
     "tags": frozenset(),
     "numeric": {feature: 0.0 for feature in CARD_METADATA_NUMERIC_FEATURES},
-    "raw": {},
-    "deckshop_flags": (),
-    "deckshop_properties": (),
 }
 
 
@@ -135,6 +150,7 @@ def _normalise_metadata(raw: dict[str, Any]) -> dict[str, Any]:
         card_type = "unknown"
     raw_tags = raw.get("tags") or []
     tags = frozenset(str(tag) for tag in raw_tags if str(tag) in CARD_METADATA_TAGS)
+    role = next((tag for tag in tags if tag in CARD_METADATA_ROLES), "")
     raw_numeric = raw.get("numeric") or {}
     numeric = {
         feature: max(0.0, min(1.0, float(raw_numeric.get(feature, 0.0) or 0.0)))
@@ -144,11 +160,9 @@ def _normalise_metadata(raw: dict[str, Any]) -> dict[str, Any]:
         "name": str(raw.get("name") or "<unknown>"),
         "key": str(raw.get("key") or "<unknown>"),
         "type": card_type,
+        "role": role,
         "tags": tags,
         "numeric": numeric,
-        "raw": raw.get("raw") or {},
-        "deckshop_flags": tuple(raw.get("deckshop_flags") or ()),
-        "deckshop_properties": tuple(raw.get("deckshop_properties") or ()),
     }
 
 
