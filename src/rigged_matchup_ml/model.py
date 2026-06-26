@@ -74,6 +74,15 @@ class DeckEncoder(nn.Module):
             nn.init.zeros_(head.weight)
             nn.init.constant_(head.bias, 0.5413)  # softplus(0.5413) ~= 1.0
             self.card_importance_head = head
+        # Dedicated learned ponderation for the evolved / hero form: the importance
+        # head reads evo/hero from the metadata vector, but that signal is a handful
+        # of dims diluted across the whole metadata MLP. These scalar gates give the
+        # evolved/hero state its own multiplicative weight on the card's importance
+        # (deck pool + cross-pairs): an evolved win condition can outweigh its base
+        # form directly. exp(0)=1 at init -> neutral (identical to no gate), and the
+        # sign+magnitude of the real evo/hero weight is learned from win/loss.
+        self.evo_importance_gate = nn.Parameter(torch.zeros(()))
+        self.hero_importance_gate = nn.Parameter(torch.zeros(()))
         self.tower_embedding = nn.Embedding(tower_count, embedding_dim // 2, padding_idx=0)
         card_input = embedding_dim + 4 * (embedding_dim // 4) + metadata_embedding_dim
         self.card_projection = nn.Sequential(
@@ -115,17 +124,30 @@ class DeckEncoder(nn.Module):
         self,
         card_metadata: torch.Tensor | None,
         card_present: torch.Tensor,
+        evolutions: torch.Tensor | None = None,
+        heroes: torch.Tensor | None = None,
     ) -> torch.Tensor | None:
         """Positive per-card importance weight ``(B, 8)`` from metadata, or None.
 
         Padding positions get weight 0. Returns None when the importance head is
         disabled or no metadata is available, so callers fall back to uniform.
+        ``evolutions`` / ``heroes`` (per-position level, 0 = base form) apply the
+        learned evo/hero ponderation gate; both neutral (x1) at init.
         """
         if self.card_importance_head is None or card_metadata is None:
             return None
         present = card_present.bool().float()
         raw = self.card_importance_head(card_metadata.float()).squeeze(-1)
-        return nn.functional.softplus(raw) * present
+        weight = nn.functional.softplus(raw) * present
+        if evolutions is not None:
+            weight = weight * torch.exp(
+                self.evo_importance_gate * (evolutions > 0).to(weight.dtype)
+            )
+        if heroes is not None:
+            weight = weight * torch.exp(
+                self.hero_importance_gate * (heroes > 0).to(weight.dtype)
+            )
+        return weight * present
 
     def _archetype(self, card_features: torch.Tensor, card_mask: torch.Tensor) -> torch.Tensor:
         if self.deck_transformer is None or self.archetype_token is None:
@@ -190,7 +212,7 @@ class DeckEncoder(nn.Module):
         card_features = torch.cat(card_parts, dim=-1)
         card_features = self.card_projection(card_features) * mask
         card_mask = mask.squeeze(-1)
-        importance = self.card_importance(card_metadata, card_present)
+        importance = self.card_importance(card_metadata, card_present, evolutions, heroes)
         if importance is not None:
             # Role-weighted deck pool: win conditions dominate the deck summary
             # instead of every card contributing equally. Neutral at init (w~1).
@@ -688,9 +710,11 @@ class SymmetricMatchupModel(nn.Module):
         if self.use_cross_card_interactions:
             if self.card_interactions is None:
                 raise ValueError("Cross-card interactions are enabled but not initialized")
-            team_weights = self.deck_encoder.card_importance(team_metadata, team_present)
+            team_weights = self.deck_encoder.card_importance(
+                team_metadata, team_present, team_evos, team_heroes
+            )
             opponent_weights = self.deck_encoder.card_importance(
-                opponent_metadata, opponent_present
+                opponent_metadata, opponent_present, opponent_evos, opponent_heroes
             )
             team_to_opponent = self.card_interactions.cross(
                 team_cards, team_mask, opponent_cards, opponent_mask,

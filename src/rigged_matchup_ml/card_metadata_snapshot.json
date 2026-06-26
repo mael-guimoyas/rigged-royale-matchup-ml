@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "generated_at": "2026-06-26T21:08:35+00:00",
+  "generated_at": "2026-06-26T21:32:51+00:00",
   "source": {
     "method": "hand-curated taxonomy (offline, no scraping)",
     "generator": "scripts/refresh_card_metadata.py::CARD_TABLE"
@@ -101,7 +101,7 @@
         "range": 0.2
       },
       "hero_ability": {
-        "cost": 2,
+        "cost": 3,
         "tags": [
           "ability_control"
         ]
@@ -263,7 +263,7 @@
         "range": 0.2
       },
       "evo": {
-        "cycle": 2,
+        "cycle": 1,
         "tags": [
           "evo_buff"
         ]
@@ -376,6 +376,13 @@
         "dps": 0.6,
         "speed": 0.5,
         "range": 0.6
+      },
+      "evo": {
+        "cycle": 1,
+        "tags": [
+          "evo_spawn",
+          "evo_buff"
+        ]
       }
     },
     "26000008": {
@@ -410,7 +417,7 @@
         "range": 0.2
       },
       "evo": {
-        "cycle": 2,
+        "cycle": 1,
         "tags": [
           "evo_buff"
         ]
@@ -481,7 +488,7 @@
         "range": 0.2
       },
       "evo": {
-        "cycle": 1,
+        "cycle": 2,
         "tags": [
           "evo_spawn",
           "evo_buff"
@@ -766,7 +773,7 @@
         ]
       },
       "evo": {
-        "cycle": 2,
+        "cycle": 1,
         "tags": [
           "evo_shield"
         ]
@@ -942,6 +949,13 @@
         "dps": 0.6,
         "speed": 0.75,
         "range": 0.4
+      },
+      "evo": {
+        "cycle": 1,
+        "tags": [
+          "evo_shield",
+          "evo_control"
+        ]
       }
     },
     "26000023": {
@@ -1012,7 +1026,7 @@
         "range": 0.6
       },
       "evo": {
-        "cycle": 2,
+        "cycle": 1,
         "tags": [
           "evo_control",
           "evo_damage"
@@ -1083,6 +1097,13 @@
         "dps": 0.2,
         "speed": 0.5,
         "range": 1.0
+      },
+      "evo": {
+        "cycle": 2,
+        "tags": [
+          "evo_control",
+          "evo_splash"
+        ]
       }
     },
     "26000027": {
@@ -1226,7 +1247,7 @@
         "range": 0.2
       },
       "evo": {
-        "cycle": 1,
+        "cycle": 2,
         "tags": [
           "evo_control"
         ]
@@ -1442,6 +1463,13 @@
         "dps": 0.6,
         "speed": 1.0,
         "range": 0.2
+      },
+      "evo": {
+        "cycle": 2,
+        "tags": [
+          "evo_control",
+          "evo_charge"
+        ]
       }
     },
     "26000037": {
@@ -1477,6 +1505,12 @@
         "dps": 1.0,
         "speed": 0.75,
         "range": 0.6
+      },
+      "evo": {
+        "cycle": 2,
+        "tags": [
+          "evo_damage"
+        ]
       }
     },
     "26000038": {
@@ -1591,6 +1625,12 @@
         "dps": 0.6,
         "speed": 1.0,
         "range": 0.95
+      },
+      "evo": {
+        "cycle": 2,
+        "tags": [
+          "evo_damage"
+        ]
       }
     },
     "26000041": {
@@ -1767,7 +1807,7 @@
         "range": 0.6
       },
       "evo": {
-        "cycle": 2,
+        "cycle": 1,
         "tags": [
           "evo_control"
         ]
@@ -1838,7 +1878,7 @@
         "range": 0.2
       },
       "evo": {
-        "cycle": 3,
+        "cycle": 1,
         "tags": [
           "evo_shield",
           "evo_charge"
@@ -1912,7 +1952,7 @@
         "range": 0.2
       },
       "evo": {
-        "cycle": 1,
+        "cycle": 2,
         "tags": [
           "evo_buff"
         ]
@@ -2124,7 +2164,7 @@
         "range": 0.2
       },
       "evo": {
-        "cycle": 2,
+        "cycle": 1,
         "tags": [
           "evo_control"
         ]
@@ -2235,6 +2275,13 @@
         "dps": 0.8,
         "speed": 1.0,
         "range": 0.2
+      },
+      "evo": {
+        "cycle": 2,
+        "tags": [
+          "evo_damage",
+          "evo_splash"
+        ]
       }
     },
     "26000059": {
@@ -2270,7 +2317,7 @@
         "range": 0.2
       },
       "evo": {
-        "cycle": 2,
+        "cycle": 1,
         "tags": [
           "evo_buff"
         ]
@@ -2309,6 +2356,12 @@
         "dps": 0.6,
         "speed": 0.5,
         "range": 0.2
+      },
+      "evo": {
+        "cycle": 1,
+        "tags": [
+          "evo_spawn"
+        ]
       }
     },
     "26000061": {
@@ -2378,7 +2431,7 @@
         "range": 0.9
       },
       "hero_ability": {
-        "cost": 1,
+        "cost": 2,
         "tags": [
           "ability_damage"
         ]
@@ -2418,6 +2471,13 @@
         "dps": 0.6,
         "speed": 0.5,
         "range": 0.6
+      },
+      "evo": {
+        "cycle": 1,
+        "tags": [
+          "evo_control",
+          "evo_damage"
+        ]
       }
     },
     "26000064": {
@@ -2969,47 +3029,6 @@
         "range": 0.4
       }
     },
-    "26000081": {
-      "name": "Terry",
-      "key": "terry",
-      "type": "troop",
-      "role": "dps",
-      "tags": [
-        "dps",
-        "high_dps",
-        "champion"
-      ],
-      "tiers": {
-        "hitpoints": 4,
-        "damage": 3,
-        "dps": 4,
-        "speed": 3,
-        "range": 1,
-        "elixir": 4
-      },
-      "grid": {
-        "hitpoints": 16,
-        "damage": 12,
-        "dps": 16,
-        "range": 4,
-        "speed": 6
-      },
-      "numeric": {
-        "elixir": 0.4444,
-        "hitpoints": 0.8,
-        "damage": 0.6,
-        "dps": 0.8,
-        "speed": 0.75,
-        "range": 0.2
-      },
-      "champion_ability": {
-        "cost": 1,
-        "tags": [
-          "ability_damage",
-          "ability_control"
-        ]
-      }
-    },
     "26000082": {
       "name": "Super Mini P.E.K.K.A",
       "key": "super-mini-pekka",
@@ -3531,6 +3550,13 @@
         "dps": 0.6,
         "speed": 0.0,
         "range": 0.6
+      },
+      "evo": {
+        "cycle": 2,
+        "tags": [
+          "evo_control",
+          "evo_damage"
+        ]
       }
     },
     "27000001": {
@@ -3600,7 +3626,7 @@
         "range": 1.0
       },
       "evo": {
-        "cycle": 3,
+        "cycle": 2,
         "tags": [
           "evo_spawn",
           "evo_damage"
@@ -3737,6 +3763,13 @@
         "dps": 0.6,
         "speed": 0.0,
         "range": 0.6
+      },
+      "evo": {
+        "cycle": 2,
+        "tags": [
+          "evo_control",
+          "evo_damage"
+        ]
       }
     },
     "27000007": {
@@ -3914,6 +3947,12 @@
         "dps": 0.0,
         "speed": 0.0,
         "range": 0.0
+      },
+      "evo": {
+        "cycle": 2,
+        "tags": [
+          "evo_control"
+        ]
       }
     },
     "27000013": {
@@ -3948,6 +3987,13 @@
         "dps": 0.0,
         "speed": 0.0,
         "range": 0.0
+      },
+      "evo": {
+        "cycle": 2,
+        "tags": [
+          "evo_spawn",
+          "evo_damage"
+        ]
       }
     },
     "27000014": {
@@ -4608,6 +4654,13 @@
         "dps": 0.0,
         "speed": 0.0,
         "range": 0.6
+      },
+      "evo": {
+        "cycle": 2,
+        "tags": [
+          "evo_control",
+          "evo_splash"
+        ]
       }
     },
     "28000018": {

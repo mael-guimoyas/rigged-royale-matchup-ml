@@ -170,7 +170,6 @@ CARD_TABLE: dict[int, tuple[str, str, tuple[str, ...], int, int, int, int, int]]
     26000077: ("troop", "tank", ("reset_control", "champion"), 4, 3, 3, 2, 1),            # Monk
     26000078: ("troop", "support", ("air_target",), 2, 4, 3, 2, 4),                       # Super Archers
     26000080: ("troop", "support", ("splash", "air_target", "flying"), 2, 2, 3, 3, 2),    # Skeleton Dragons
-    26000081: ("troop", "dps", ("high_dps", "champion"), 4, 3, 4, 3, 1),                  # Terry
     26000082: ("troop", "dps", ("high_dps",), 3, 5, 5, 3, 1),                             # Super Mini P.E.K.K.A
     26000083: ("troop", "support", ("splash", "air_target"), 2, 2, 2, 2, 4),              # Mother Witch
     26000084: ("troop", "swarm", ("air_target", "reset_control"), 1, 1, 1, 4, 2),         # Electro Spirit
@@ -248,7 +247,7 @@ CARD_NAMES: dict[int, str] = {
     26000068: "Battle Healer", 26000069: "Skeleton King", 26000070: "Super Lava Hound",
     26000071: "Super Magic Archer", 26000072: "Archer Queen", 26000073: "Santa Hog Rider",
     26000074: "Golden Knight", 26000075: "Super Ice Golem", 26000077: "Monk", 26000078: "Super Archers",
-    26000080: "Skeleton Dragons", 26000081: "Terry", 26000082: "Super Mini P.E.K.K.A", 26000083: "Mother Witch",
+    26000080: "Skeleton Dragons", 26000082: "Super Mini P.E.K.K.A", 26000083: "Mother Witch",
     26000084: "Electro Spirit", 26000085: "Electro Giant", 26000086: "Raging Prince", 26000087: "Phoenix",
     26000093: "Little Prince", 26000095: "Goblin Demolisher", 26000096: "Goblin Machine",
     26000097: "Suspicious Bush", 26000099: "Goblinstein", 26000101: "Rune Giant", 26000102: "Berserker",
@@ -275,9 +274,6 @@ CHAMPION_ABILITY: dict[int, tuple[int, tuple[str, ...]]] = {
     26000072: (1, ("ability_shield", "ability_buff")),     # Archer Queen - Cloaking Cape
     26000074: (1, ("ability_dash",)),                      # Golden Knight - Dashing Dash
     26000077: (1, ("ability_shield", "ability_control")),  # Monk - Brushing Strike (deflect)
-    # Terry: defunct temporary event champion, kept for historical battle data.
-    # "Hoggy Height" -- leaps and slams for 360 area damage + knockback (1 elixir).
-    26000081: (1, ("ability_damage", "ability_control")),  # Terry - Hoggy Height
     26000093: (3, ("ability_spawn",)),                     # Little Prince - Summon Guardian
     26000099: (2, ("ability_damage",)),                    # Goblinstein - electric surge
     26000103: (1, ("ability_dash",)),                      # Boss Bandit - reset + dash
@@ -287,7 +283,7 @@ CHAMPION_ABILITY: dict[int, tuple[int, tuple[str, ...]]] = {
 # fielded in hero form (heroLevel > 0). cost = elixir to activate the ability.
 # Several ability costs are best-effort estimates -- verify against the wiki.
 HERO_ABILITY: dict[int, tuple[int, tuple[str, ...]]] = {
-    26000000: (2, ("ability_control",)),                   # Hero Knight - Royal Taunt
+    26000000: (3, ("ability_control",)),                   # Hero Knight - Royal Taunt
     26000003: (3, ("ability_control",)),                   # Hero Giant - Heroic Hurl
     26000018: (2, ("ability_buff",)),                      # Hero Mini P.E.K.K.A - Breakfast Boost
     26000014: (3, ("ability_spawn",)),                     # Hero Musketeer - Trusty Turret
@@ -296,7 +292,7 @@ HERO_ABILITY: dict[int, tuple[int, tuple[str, ...]]] = {
     26000002: (2, ("ability_spawn",)),                     # Hero Goblins - Banner Brigade (respawn)
     26000039: (2, ("ability_dash", "ability_damage")),     # Hero Mega Minion - Wounding Warp
     28000015: (2, ("ability_damage",)),                    # Hero Barbarian Barrel - second roll
-    26000062: (1, ("ability_damage",)),                    # Hero Magic Archer - Triple Threat
+    26000062: (2, ("ability_damage",)),                    # Hero Magic Archer - Triple Threat (1->2, Apr 2026)
     26000006: (2, ("ability_spawn",)),                     # Hero Balloon - Coffin Cadets
     26000027: (3, ("ability_damage", "ability_dash")),     # Hero Dark Prince - Destructive Dismount
     26000034: (2, ("ability_damage",)),                    # Hero Bowler - Stone Swish
@@ -304,38 +300,59 @@ HERO_ABILITY: dict[int, tuple[int, tuple[str, ...]]] = {
 }
 
 # Evolution effects, keyed by base card id; apply only when fielded evolved
-# (evolutionLevel > 0). (cycle = cycles to charge the evo, effect tags). Covers
-# the evos curated with confidence; any other evolved card still gets the generic
-# ``evolved`` flag at runtime. cycles/tags are best-effort -- verify.
-EVO_EFFECT: dict[int, tuple[int, tuple[str, ...]]] = {
-    26000000: (2, ("evo_shield", "evo_control")),    # Evo Knight - shield + taunt/pull troops
-    26000001: (2, ("evo_damage",)),                  # Evo Archers - Power Shot + range
-    26000004: (2, ("evo_buff",)),                    # Evo P.E.K.K.A - heals on kill
-    26000008: (2, ("evo_buff",)),                    # Evo Barbarians - +HP, speed, attack speed
-    26000010: (1, ("evo_spawn", "evo_buff")),        # Evo Skeletons - extra skeleton + atk speed
-    26000011: (2, ("evo_splash", "evo_control")),    # Evo Valkyrie - tornado lures troops in
-    26000012: (2, ("evo_spawn",)),                   # Evo Skeleton Army - ghosts survive
-    26000013: (2, ("evo_splash", "evo_damage")),     # Evo Bomber - bomb bounces twice
-    26000014: (2, ("evo_damage",)),                  # Evo Musketeer - long-range triple shot
-    26000015: (2, ("evo_control", "evo_buff")),      # Evo Baby Dragon - gusts slow foes/speed allies
-    26000017: (2, ("evo_shield",)),                  # Evo Wizard - shield (no splash boost)
-    26000024: (2, ("evo_control", "evo_damage")),    # Evo Royal Giant - knockback on every shot
-    26000030: (1, ("evo_control",)),                 # Evo Ice Spirit - freezes twice
-    26000035: (2, ("evo_spawn", "evo_buff")),        # Evo Lumberjack - rage ghost on death
-    26000044: (2, ("evo_control",)),                 # Evo Hunter - net slows/stuns tanks
-    26000045: (2, ("evo_control",)),                 # Evo Executioner - axe pushes + pulls
-    26000047: (3, ("evo_shield", "evo_charge")),     # Evo Royal Recruits - shield + dash
-    26000049: (1, ("evo_buff",)),                    # Evo Bats - lifesteal / heal
-    26000050: (2, ("evo_spawn",)),                   # Evo Royal Ghost - spawns 2 Souldiers
-    26000055: (2, ("evo_control",)),                 # Evo Mega Knight - knockback (no splash boost)
-    26000056: (2, ("evo_damage",)),                  # Evo Skeleton Barrel - destroys tower intact
-    26000059: (2, ("evo_buff",)),                    # Evo Royal Hogs - gain flight
-    26000064: (2, ("evo_splash", "evo_damage")),     # Evo Firecracker - lingering AoE field
-    27000002: (3, ("evo_spawn", "evo_damage")),      # Evo Mortar - spawns Goblins on hit
-    27000010: (2, ("evo_spawn",)),                   # Evo Furnace - spawns Fire Spirit each attack
-    28000004: (2, ("evo_spawn",)),                   # Evo Goblin Barrel - spawns two barrels
-    28000008: (2, ("evo_buff", "evo_damage")),       # Evo Zap - double zap (buff/damage)
+# (evolutionLevel > 0). Value is the effect-tag tuple only; the evo *cycle*
+# (cycles to charge) is derived from the card's elixir cost -- see _evo_cycle:
+# costly cards charge in 1 cycle, cheap small cards take 2. The cycle count is
+# always 1 or 2. Any uncurated evolved card still gets the generic ``evolved``
+# flag at runtime. Tags are best-effort -- verify.
+EVO_EFFECT: dict[int, tuple[str, ...]] = {
+    26000000: ("evo_shield", "evo_control"),    # Evo Knight - shield + taunt/pull troops
+    26000001: ("evo_damage",),                  # Evo Archers - Power Shot + range
+    26000004: ("evo_buff",),                    # Evo P.E.K.K.A - heals on kill
+    26000007: ("evo_spawn", "evo_buff"),        # Evo Witch - heals when skeletons spawn
+    26000008: ("evo_buff",),                    # Evo Barbarians - +HP, speed, attack speed
+    26000010: ("evo_spawn", "evo_buff"),        # Evo Skeletons - extra skeleton + atk speed
+    26000011: ("evo_splash", "evo_control"),    # Evo Valkyrie - tornado lures troops in
+    26000012: ("evo_spawn",),                   # Evo Skeleton Army - ghosts survive
+    26000013: ("evo_splash", "evo_damage"),     # Evo Bomber - bomb bounces twice
+    26000014: ("evo_damage",),                  # Evo Musketeer - long-range triple shot
+    26000015: ("evo_control", "evo_buff"),      # Evo Baby Dragon - gusts slow foes/speed allies
+    26000017: ("evo_shield",),                  # Evo Wizard - shield (no splash boost)
+    26000022: ("evo_shield", "evo_control"),    # Evo Minion Horde - Horde Immunity (invis+invuln after hit)
+    26000024: ("evo_control", "evo_damage"),    # Evo Royal Giant - knockback on every shot
+    26000026: ("evo_control", "evo_splash"),    # Evo Princess - Ice Arrows slow zone
+    26000030: ("evo_control",),                 # Evo Ice Spirit - freezes twice
+    26000035: ("evo_spawn", "evo_buff"),        # Evo Lumberjack - rage ghost on death
+    26000036: ("evo_control", "evo_charge"),    # Evo Battle Ram - pushes troops + bounces on tower
+    26000037: ("evo_damage",),                  # Evo Inferno Dragon - keeps damage ramp
+    26000040: ("evo_damage",),                  # Evo Dart Goblin - inflicts poison
+    26000044: ("evo_control",),                 # Evo Hunter - net slows/stuns tanks
+    26000045: ("evo_control",),                 # Evo Executioner - axe pushes + pulls
+    26000047: ("evo_shield", "evo_charge"),     # Evo Royal Recruits - shield + dash
+    26000049: ("evo_buff",),                    # Evo Bats - lifesteal / heal
+    26000050: ("evo_spawn",),                   # Evo Royal Ghost - spawns 2 Souldiers
+    26000055: ("evo_control",),                 # Evo Mega Knight - knockback (no splash boost)
+    26000056: ("evo_damage",),                  # Evo Skeleton Barrel - destroys tower intact
+    26000058: ("evo_damage", "evo_splash"),     # Evo Wall Breakers - death-explosion AoE
+    26000059: ("evo_buff",),                    # Evo Royal Hogs - gain flight
+    26000060: ("evo_spawn",),                   # Evo Goblin Giant - spawns goblins at half HP
+    26000063: ("evo_control", "evo_damage"),    # Evo Electro Dragon - longer chain + stun
+    26000064: ("evo_splash", "evo_damage"),     # Evo Firecracker - lingering AoE field
+    27000000: ("evo_control", "evo_damage"),    # Evo Cannon - knockback shockwave
+    27000002: ("evo_spawn", "evo_damage"),      # Evo Mortar - spawns Goblins on hit
+    27000006: ("evo_control", "evo_damage"),    # Evo Tesla - multi-zap chain/stun
+    27000010: ("evo_spawn",),                   # Evo Furnace - spawns Fire Spirit each attack
+    27000012: ("evo_control",),                 # Evo Goblin Cage - pulls/traps troops in cage
+    27000013: ("evo_spawn", "evo_damage"),      # Evo Goblin Drill - spawns extra goblins
+    28000004: ("evo_spawn",),                   # Evo Goblin Barrel - spawns two barrels
+    28000008: ("evo_buff", "evo_damage"),       # Evo Zap - double zap (buff/damage)
+    28000017: ("evo_control", "evo_splash"),    # Evo Giant Snowball - bounce + slow/knockback
 }
+
+# Evo charges in 1 cycle if the card is costly, else 2 cycles for cheap/small
+# cards. Threshold picked to match the wiki's 1-cycle set (Wizard/P.E.K.K.A/Mega
+# Knight/Royal Recruits/Electro Dragon/Executioner/Goblin Giant are all >=5).
+EVO_1CYCLE_ELIXIR = 5
 
 
 def _ability_payload(table: dict[int, tuple[int, tuple[str, ...]]], card_id: int):
@@ -349,15 +366,19 @@ def _ability_payload(table: dict[int, tuple[int, tuple[str, ...]]], card_id: int
     return {"cost": int(cost), "tags": list(tags)}
 
 
+def _evo_cycle(card_id: int) -> int:
+    """Cycles to charge the evo: 1 for costly cards, 2 for cheap/small ones."""
+    return 1 if CARD_ELIXIR.get(card_id, 0) >= EVO_1CYCLE_ELIXIR else 2
+
+
 def _evo_payload(card_id: int):
-    entry = EVO_EFFECT.get(card_id)
-    if entry is None:
+    tags = EVO_EFFECT.get(card_id)
+    if tags is None:
         return None
-    cycle, tags = entry
     bad = [t for t in tags if t not in CARD_EVO_TAGS]
     if bad:
         raise ValueError(f"{card_id}: bad evo tags {bad}")
-    return {"cycle": int(cycle), "tags": list(tags)}
+    return {"cycle": _evo_cycle(card_id), "tags": list(tags)}
 
 
 def _slug(name: str) -> str:
