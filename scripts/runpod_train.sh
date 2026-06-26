@@ -61,6 +61,15 @@ cfg["training"]["gradient_accumulation_steps"] = env_int("RUNPOD_GRAD_ACCUM", 1)
 cfg["training"]["num_workers"] = env_int("RUNPOD_NUM_WORKERS", 4)
 cfg["training"]["epochs"] = env_int("RUNPOD_EPOCHS", int(cfg["training"]["epochs"]))
 
+# Ablation toggle: RUNPOD_CARD_METADATA_DIM=0 disables the per-card metadata
+# feature entirely (the model's metadata projection is skipped when the dim is
+# 0), reproducing the pre-metadata baseline architecture for an A/B comparison.
+# Unset -> keep the model default (full metadata vector).
+metadata_dim = os.environ.get("RUNPOD_CARD_METADATA_DIM")
+if metadata_dim not in (None, ""):
+    cfg.setdefault("model", {})["card_metadata_dim"] = int(metadata_dim)
+    print(f"card_metadata_dim overridden -> {int(metadata_dim)}")
+
 config_path = Path(os.environ["CONFIG_PATH"])
 config_path.parent.mkdir(parents=True, exist_ok=True)
 with config_path.open("w", encoding="utf-8") as handle:
