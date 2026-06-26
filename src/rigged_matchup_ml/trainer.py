@@ -13,6 +13,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from .card2vec import load_card2vec
+from .card_stats import CARD_METADATA_VECTOR_SIZE
 from .config import AppConfig
 from .dataset import load_vocabulary, matchup_dataloader
 from .metrics import binary_metrics, binary_metrics_by_group
@@ -136,6 +137,9 @@ def _model_config(config: AppConfig, vocabulary: dict[str, dict[str, int]]) -> d
         "tower_count": len(vocabulary["towers"]) + 1,
         "segment_count": len(vocabulary["segments"]) + 1,
         "patch_count": len(vocabulary["patches"]) + 1,
+        "card_metadata_dim": int(
+            config.model.get("card_metadata_dim", CARD_METADATA_VECTOR_SIZE)
+        ),
         **config.model,
     }
 
@@ -525,7 +529,7 @@ def train_model(config: AppConfig) -> Path:
                 "trophy_buckets": list(config.data["trophy_buckets"]),
                 "top_ladder_buckets": list(config.data["top_ladder_buckets"]),
             },
-            "feature_version": 4,
+            "feature_version": 5,
         },
         checkpoint,
     )

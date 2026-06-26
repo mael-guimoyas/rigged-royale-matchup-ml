@@ -1,5 +1,6 @@
 import torch
 
+from rigged_matchup_ml.card_stats import CARD_METADATA_VECTOR_SIZE
 from rigged_matchup_ml.model import SymmetricMatchupModel
 
 
@@ -9,6 +10,10 @@ def batch() -> dict[str, torch.Tensor]:
         "opponent_cards": torch.tensor([[9, 10, 11, 12, 13, 14, 15, 16]]),
         "team_elixir": torch.tensor([[3, 4, 5, 2, 6, 3, 4, 1]]),
         "opponent_elixir": torch.tensor([[2, 5, 3, 4, 7, 1, 3, 5]]),
+        "team_card_metadata": torch.zeros((1, 8, CARD_METADATA_VECTOR_SIZE)),
+        "opponent_card_metadata": torch.zeros((1, 8, CARD_METADATA_VECTOR_SIZE)),
+        "team_card_present": torch.ones((1, 8), dtype=torch.bool),
+        "opponent_card_present": torch.ones((1, 8), dtype=torch.bool),
         "team_evos": torch.tensor([[1, 0, 0, 0, 0, 0, 0, 0]]),
         "opponent_evos": torch.tensor([[0, 1, 0, 0, 0, 0, 0, 0]]),
         "team_heroes": torch.tensor([[1, 0, 0, 0, 0, 0, 0, 0]]),
@@ -46,6 +51,10 @@ def test_probability_is_antisymmetric() -> None:
         "opponent_cards": original["team_cards"],
         "team_elixir": original["opponent_elixir"],
         "opponent_elixir": original["team_elixir"],
+        "team_card_metadata": original["opponent_card_metadata"],
+        "opponent_card_metadata": original["team_card_metadata"],
+        "team_card_present": original["opponent_card_present"],
+        "opponent_card_present": original["team_card_present"],
         "team_evos": original["opponent_evos"],
         "opponent_evos": original["team_evos"],
         "team_heroes": original["opponent_heroes"],
@@ -68,6 +77,10 @@ def _reverse(original: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         "opponent_cards": original["team_cards"],
         "team_elixir": original["opponent_elixir"],
         "opponent_elixir": original["team_elixir"],
+        "team_card_metadata": original["opponent_card_metadata"],
+        "opponent_card_metadata": original["team_card_metadata"],
+        "team_card_present": original["opponent_card_present"],
+        "opponent_card_present": original["team_card_present"],
         "team_evos": original["opponent_evos"],
         "opponent_evos": original["team_evos"],
         "team_heroes": original["opponent_heroes"],
@@ -145,6 +158,10 @@ def test_probability_is_antisymmetric_with_learnable_prior() -> None:
         "opponent_cards": original["team_cards"],
         "team_elixir": original["opponent_elixir"],
         "opponent_elixir": original["team_elixir"],
+        "team_card_metadata": original["opponent_card_metadata"],
+        "opponent_card_metadata": original["team_card_metadata"],
+        "team_card_present": original["opponent_card_present"],
+        "opponent_card_present": original["team_card_present"],
         "team_evos": original["opponent_evos"],
         "opponent_evos": original["team_evos"],
         "team_heroes": original["opponent_heroes"],

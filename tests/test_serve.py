@@ -118,6 +118,7 @@ def test_probability_to_confidence() -> None:
 def _make_checkpoint(path: Path) -> None:
     import torch
 
+    from rigged_matchup_ml.card_stats import CARD_METADATA_VECTOR_SIZE
     from rigged_matchup_ml.model import SymmetricMatchupModel
 
     cards = {str(cid): i + 1 for i, cid in enumerate(
@@ -136,6 +137,7 @@ def _make_checkpoint(path: Path) -> None:
         "patch_count": 3,
         "embedding_dim": 16,
         "hidden_dim": 32,
+        "card_metadata_dim": CARD_METADATA_VECTOR_SIZE,
         "dropout": 0.0,
         "use_cross_card_interactions": True,
         "use_intra_deck_synergies": True,
@@ -154,7 +156,7 @@ def _make_checkpoint(path: Path) -> None:
             "temperature": 1.0,
             "segment_temperatures": {},
             "calibration": {},
-            "feature_version": 4,
+            "feature_version": 5,
         },
         path,
     )

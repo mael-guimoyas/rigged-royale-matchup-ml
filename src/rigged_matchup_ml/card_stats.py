@@ -16,6 +16,10 @@ payload does not send card rarities. Regenerate with::
 
 from __future__ import annotations
 
+import json
+from importlib.resources import files
+from typing import Any
+
 # card_id -> elixir cost. Missing ids resolve to 0 ("unknown") via elixir_for.
 CARD_ELIXIR: dict[int, int] = {
     26000000: 3, 26000001: 3, 26000002: 2, 26000003: 5, 26000004: 7,
@@ -35,7 +39,8 @@ CARD_ELIXIR: dict[int, int] = {
     26000070: 8, 26000071: 5, 26000072: 5, 26000073: 5, 26000074: 4,
     26000075: 4, 26000077: 5, 26000078: 3, 26000080: 4, 26000081: 4,
     26000082: 5, 26000083: 4, 26000084: 1, 26000085: 7, 26000086: 5,
-    26000087: 4,
+    26000087: 4, 26000093: 3, 26000095: 4, 26000096: 5, 26000097: 2,
+    26000099: 5, 26000101: 4, 26000102: 2, 26000103: 6,
     27000000: 3, 27000001: 5, 27000002: 4, 27000003: 5, 27000004: 4,
     27000005: 6, 27000006: 4, 27000007: 6, 27000008: 6, 27000009: 3,
     27000010: 4, 27000012: 4, 27000013: 4, 27000014: 5,
@@ -43,18 +48,147 @@ CARD_ELIXIR: dict[int, int] = {
     28000005: 4, 28000006: 1, 28000007: 6, 28000008: 2, 28000009: 4,
     28000010: 5, 28000011: 2, 28000012: 3, 28000013: 3, 28000014: 3,
     28000015: 2, 28000016: 1, 28000017: 2, 28000018: 3, 28000020: 5,
+    28000023: 3, 28000024: 2, 28000025: 6, 28000026: 3,
 }
 
 # Cards whose rarity is "Champion" (role 2). Used server-side to set the
 # champion role from card ids alone -- the site payload carries no rarity.
 CHAMPION_CARD_IDS: frozenset[int] = frozenset(
-    {26000065, 26000069, 26000072, 26000074, 26000077, 26000081}
+    {
+        26000065,
+        26000069,
+        26000072,
+        26000074,
+        26000077,
+        26000081,
+        26000093,
+        26000099,
+        26000103,
+    }
 )
 
 # Highest real card elixir is 9; the embedding table sizes to this.
 MAX_CARD_ELIXIR = 9
 
+CARD_METADATA_TYPE_NAMES: tuple[str, ...] = ("unknown", "troop", "building", "spell")
+CARD_METADATA_TAGS: tuple[str, ...] = (
+    "win_condition",
+    "support",
+    "tank",
+    "mini_tank",
+    "spell",
+    "building",
+    "splash",
+    "air_target",
+    "ground_target",
+    "bait",
+    "cycle",
+    "building_chaser",
+    "spawner",
+    "swarm",
+)
+CARD_METADATA_NUMERIC_FEATURES: tuple[str, ...] = (
+    "elixir",
+    "hitpoints",
+    "damage",
+    "dps",
+    "hit_speed",
+    "range",
+    "speed",
+    "radius",
+)
+CARD_METADATA_VECTOR_FIELDS: tuple[str, ...] = (
+    *(f"type:{name}" for name in CARD_METADATA_TYPE_NAMES),
+    *(f"tag:{name}" for name in CARD_METADATA_TAGS),
+    *(f"num:{name}" for name in CARD_METADATA_NUMERIC_FEATURES),
+)
+CARD_METADATA_VECTOR_SIZE = len(CARD_METADATA_VECTOR_FIELDS)
+
+UNKNOWN_CARD_METADATA: dict[str, Any] = {
+    "name": "<unknown>",
+    "key": "<unknown>",
+    "type": "unknown",
+    "tags": frozenset(),
+    "numeric": {feature: 0.0 for feature in CARD_METADATA_NUMERIC_FEATURES},
+    "raw": {},
+    "deckshop_flags": (),
+    "deckshop_properties": (),
+}
+
 
 def elixir_for(card_id: int) -> int:
     """Elixir cost for a card id, or 0 when unknown (new/unmapped card)."""
     return CARD_ELIXIR.get(int(card_id), 0)
+
+
+def _load_metadata_snapshot() -> dict[str, Any]:
+    try:
+        resource = files(__package__).joinpath("card_metadata_snapshot.json")
+        return json.loads(resource.read_text(encoding="utf-8"))
+    except (FileNotFoundError, ModuleNotFoundError):
+        return {"cards": {}, "schema_version": 1}
+
+
+def _normalise_metadata(raw: dict[str, Any]) -> dict[str, Any]:
+    card_type = str(raw.get("type") or "unknown").lower()
+    if card_type not in CARD_METADATA_TYPE_NAMES:
+        card_type = "unknown"
+    raw_tags = raw.get("tags") or []
+    tags = frozenset(str(tag) for tag in raw_tags if str(tag) in CARD_METADATA_TAGS)
+    raw_numeric = raw.get("numeric") or {}
+    numeric = {
+        feature: max(0.0, min(1.0, float(raw_numeric.get(feature, 0.0) or 0.0)))
+        for feature in CARD_METADATA_NUMERIC_FEATURES
+    }
+    return {
+        "name": str(raw.get("name") or "<unknown>"),
+        "key": str(raw.get("key") or "<unknown>"),
+        "type": card_type,
+        "tags": tags,
+        "numeric": numeric,
+        "raw": raw.get("raw") or {},
+        "deckshop_flags": tuple(raw.get("deckshop_flags") or ()),
+        "deckshop_properties": tuple(raw.get("deckshop_properties") or ()),
+    }
+
+
+CARD_METADATA_SNAPSHOT = _load_metadata_snapshot()
+CARD_METADATA_SOURCE_VERSION = str(
+    CARD_METADATA_SNAPSHOT.get("generated_at") or CARD_METADATA_SNAPSHOT.get("schema_version") or ""
+)
+CARD_METADATA: dict[int, dict[str, Any]] = {
+    int(card_id): _normalise_metadata(raw)
+    for card_id, raw in (CARD_METADATA_SNAPSHOT.get("cards") or {}).items()
+}
+UNKNOWN_CARD_METADATA_VECTOR: tuple[float, ...] = (
+    tuple(1.0 if name == "unknown" else 0.0 for name in CARD_METADATA_TYPE_NAMES)
+    + tuple(0.0 for _ in CARD_METADATA_TAGS)
+    + tuple(0.0 for _ in CARD_METADATA_NUMERIC_FEATURES)
+)
+PADDING_CARD_METADATA_VECTOR: tuple[float, ...] = tuple(
+    0.0 for _ in range(CARD_METADATA_VECTOR_SIZE)
+)
+
+
+def metadata_for(card_id: int) -> dict[str, Any]:
+    """Static gameplay metadata for a raw card id.
+
+    Unknown real card ids return an explicit ``unknown`` metadata record; padding
+    id 0 should be handled by callers with ``metadata_vector_for``.
+    """
+    return CARD_METADATA.get(int(card_id), UNKNOWN_CARD_METADATA)
+
+
+def metadata_vector_for(card_id: int) -> tuple[float, ...]:
+    """Stable float vector for a raw card id; id 0 is all-zero padding."""
+    if int(card_id) == 0:
+        return PADDING_CARD_METADATA_VECTOR
+    metadata = metadata_for(card_id)
+    card_type = str(metadata["type"])
+    tags = metadata["tags"]
+    numeric = metadata["numeric"]
+    return (
+        tuple(1.0 if name == card_type else 0.0 for name in CARD_METADATA_TYPE_NAMES)
+        + tuple(1.0 if tag in tags else 0.0 for tag in CARD_METADATA_TAGS)
+        + tuple(float(numeric[feature]) for feature in CARD_METADATA_NUMERIC_FEATURES)
+    )

@@ -72,6 +72,11 @@ def collect_api(
     ),
     bucket: str = typer.Option("training-battles", help="Storage bucket for shards."),
     prefix: str = typer.Option("battles", help="Object key prefix inside the bucket."),
+    max_queue: int | None = typer.Option(
+        None,
+        "--max-queue",
+        help="Cap active snowball frontier tags waiting to be fetched.",
+    ),
     min_trophies: int | None = typer.Option(
         None,
         help="Drop ladder battles/opponents below this trophy count (default from "
@@ -124,6 +129,7 @@ def collect_api(
         upload=upload,
         bucket=bucket,
         prefix=prefix,
+        max_queue=max_queue,
         min_trophies=min_trophies,
         balance=balance,
         api_token_mode=api_token_mode,

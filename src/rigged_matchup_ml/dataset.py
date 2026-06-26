@@ -11,7 +11,15 @@ import pyarrow.dataset as pads
 import torch
 from torch.utils.data import DataLoader, IterableDataset, get_worker_info
 
-from .card_stats import CARD_ELIXIR, elixir_for
+from .card_stats import (
+    CARD_ELIXIR,
+    CARD_METADATA,
+    CARD_METADATA_VECTOR_SIZE,
+    PADDING_CARD_METADATA_VECTOR,
+    UNKNOWN_CARD_METADATA_VECTOR,
+    elixir_for,
+    metadata_vector_for,
+)
 
 
 FEATURE_COLUMNS = [
@@ -64,6 +72,14 @@ def encode_row(
         costs = [elixir_for(value) for value in values[:8]]
         return costs + [0] * (8 - len(costs))
 
+    def encode_metadata(values: list[int]) -> list[tuple[float, ...]]:
+        vectors = [metadata_vector_for(value) for value in values[:8]]
+        return vectors + [PADDING_CARD_METADATA_VECTOR] * (8 - len(vectors))
+
+    def encode_present(values: list[int]) -> list[bool]:
+        present = [int(value) > 0 for value in values[:8]]
+        return present + [False] * (8 - len(present))
+
     if swapped:
         team_prefix, opponent_prefix = "opponent", "team"
         win = not bool(row["win"])
@@ -84,6 +100,18 @@ def encode_row(
         ),
         "opponent_elixir": torch.tensor(
             encode_elixir(row[f"{opponent_prefix}_card_ids"]), dtype=torch.long
+        ),
+        "team_card_metadata": torch.tensor(
+            encode_metadata(row[f"{team_prefix}_card_ids"]), dtype=torch.float32
+        ),
+        "opponent_card_metadata": torch.tensor(
+            encode_metadata(row[f"{opponent_prefix}_card_ids"]), dtype=torch.float32
+        ),
+        "team_card_present": torch.tensor(
+            encode_present(row[f"{team_prefix}_card_ids"]), dtype=torch.bool
+        ),
+        "opponent_card_present": torch.tensor(
+            encode_present(row[f"{opponent_prefix}_card_ids"]), dtype=torch.bool
         ),
         "team_evos": torch.tensor(
             list(row[f"{team_prefix}_evolution_levels"][:8]), dtype=torch.long
@@ -144,6 +172,10 @@ def encode_rows(
     opponent_cards: list[list[int]] = []
     team_elixir: list[list[int]] = []
     opponent_elixir: list[list[int]] = []
+    team_card_metadata: list[list[tuple[float, ...]]] = []
+    opponent_card_metadata: list[list[tuple[float, ...]]] = []
+    team_card_present: list[list[bool]] = []
+    opponent_card_present: list[list[bool]] = []
     team_evos: list[list[int]] = []
     opponent_evos: list[list[int]] = []
     team_heroes: list[list[int]] = []
@@ -184,6 +216,20 @@ def encode_rows(
         opponent_elixir.append(
             _fixed_length([elixir_for(c) for c in row[f"{opponent_prefix}_card_ids"][:8]])
         )
+        team_raw_cards = list(row[f"{team_prefix}_card_ids"][:8])
+        opponent_raw_cards = list(row[f"{opponent_prefix}_card_ids"][:8])
+        team_card_metadata.append(
+            [metadata_vector_for(c) for c in team_raw_cards]
+            + [PADDING_CARD_METADATA_VECTOR] * (8 - len(team_raw_cards))
+        )
+        opponent_card_metadata.append(
+            [metadata_vector_for(c) for c in opponent_raw_cards]
+            + [PADDING_CARD_METADATA_VECTOR] * (8 - len(opponent_raw_cards))
+        )
+        team_card_present.append(_fixed_length([int(c) > 0 for c in team_raw_cards]))
+        opponent_card_present.append(
+            _fixed_length([int(c) > 0 for c in opponent_raw_cards])
+        )
         team_evos.append(_fixed_length(row[f"{team_prefix}_evolution_levels"]))
         opponent_evos.append(_fixed_length(row[f"{opponent_prefix}_evolution_levels"]))
         team_heroes.append(_fixed_length(row[f"{team_prefix}_hero_levels"]))
@@ -206,6 +252,12 @@ def encode_rows(
         "opponent_cards": torch.tensor(opponent_cards, dtype=torch.long),
         "team_elixir": torch.tensor(team_elixir, dtype=torch.long),
         "opponent_elixir": torch.tensor(opponent_elixir, dtype=torch.long),
+        "team_card_metadata": torch.tensor(team_card_metadata, dtype=torch.float32),
+        "opponent_card_metadata": torch.tensor(
+            opponent_card_metadata, dtype=torch.float32
+        ),
+        "team_card_present": torch.tensor(team_card_present, dtype=torch.bool),
+        "opponent_card_present": torch.tensor(opponent_card_present, dtype=torch.bool),
         "team_evos": torch.tensor(team_evos, dtype=torch.long),
         "opponent_evos": torch.tensor(opponent_evos, dtype=torch.long),
         "team_heroes": torch.tensor(team_heroes, dtype=torch.long),
@@ -239,12 +291,20 @@ def encode_rows(
 _PAIRED_FIELDS = (
     ("team_cards", "opponent_cards"),
     ("team_elixir", "opponent_elixir"),
+    ("team_card_metadata", "opponent_card_metadata"),
+    ("team_card_present", "opponent_card_present"),
     ("team_evos", "opponent_evos"),
     ("team_heroes", "opponent_heroes"),
     ("team_roles", "opponent_roles"),
     ("team_tower", "opponent_tower"),
 )
-_FLOAT_FIELDS = ("matrix_prior", "target")
+_FLOAT_FIELDS = (
+    "matrix_prior",
+    "target",
+    "team_card_metadata",
+    "opponent_card_metadata",
+)
+_BOOL_FIELDS = ("team_card_present", "opponent_card_present")
 
 
 def _int_lut(mapping: dict) -> tuple[np.ndarray, np.ndarray]:
@@ -268,6 +328,7 @@ class _EncodeContext:
 
     __slots__ = (
         "card_keys", "card_values", "elixir_keys", "elixir_values",
+        "metadata_keys", "metadata_values", "unknown_metadata",
         "tower_keys", "tower_values", "segment_keys", "segment_values",
         "patch_keys", "patch_values",
     )
@@ -275,6 +336,10 @@ class _EncodeContext:
     def __init__(self, vocabulary: dict[str, dict[str, int]]) -> None:
         self.card_keys, self.card_values = _int_lut(vocabulary["cards"])
         self.elixir_keys, self.elixir_values = _int_lut(CARD_ELIXIR)
+        self.metadata_keys, self.metadata_values = _metadata_lut(CARD_METADATA)
+        self.unknown_metadata = np.asarray(
+            UNKNOWN_CARD_METADATA_VECTOR, dtype=np.float32
+        )
         self.tower_keys, self.tower_values = _str_lut(vocabulary["towers"])
         self.segment_keys, self.segment_values = _str_lut(vocabulary["segments"])
         self.patch_keys, self.patch_values = _str_lut(vocabulary["patches"])
@@ -290,6 +355,37 @@ def _lookup(values: np.ndarray, keys: np.ndarray, mapped: np.ndarray) -> np.ndar
     hit = keys[position] == flat
     result = np.where(hit, mapped[position], 0)
     return result.reshape(values.shape).astype(np.int64, copy=False)
+
+
+def _metadata_lut(mapping: dict[int, dict]) -> tuple[np.ndarray, np.ndarray]:
+    keys = np.fromiter((int(key) for key in mapping), dtype=np.int64, count=len(mapping))
+    vectors = np.asarray(
+        [metadata_vector_for(int(key)) for key in mapping], dtype=np.float32
+    )
+    if keys.size == 0:
+        return keys, vectors.reshape(0, CARD_METADATA_VECTOR_SIZE)
+    order = np.argsort(keys, kind="stable")
+    return keys[order], vectors[order]
+
+
+def _lookup_metadata(
+    values: np.ndarray,
+    keys: np.ndarray,
+    mapped: np.ndarray,
+    unknown: np.ndarray,
+) -> np.ndarray:
+    out = np.zeros(values.shape + (CARD_METADATA_VECTOR_SIZE,), dtype=np.float32)
+    flat = values.reshape(-1)
+    out_flat = out.reshape(flat.shape[0], CARD_METADATA_VECTOR_SIZE)
+    real_card = flat > 0
+    out_flat[real_card] = unknown
+    if keys.size == 0:
+        return out
+    position = np.searchsorted(keys, flat)
+    np.clip(position, 0, keys.size - 1, out=position)
+    hit = (keys[position] == flat) & real_card
+    out_flat[hit] = mapped[position[hit]]
+    return out
 
 
 def _list_matrix(column, width: int = 8) -> np.ndarray:
@@ -323,6 +419,20 @@ def _decode_batch(batch, context: _EncodeContext) -> dict[str, np.ndarray]:
         "opponent_cards": _lookup(opponent_raw, context.card_keys, context.card_values),
         "team_elixir": _lookup(team_raw, context.elixir_keys, context.elixir_values),
         "opponent_elixir": _lookup(opponent_raw, context.elixir_keys, context.elixir_values),
+        "team_card_metadata": _lookup_metadata(
+            team_raw,
+            context.metadata_keys,
+            context.metadata_values,
+            context.unknown_metadata,
+        ),
+        "opponent_card_metadata": _lookup_metadata(
+            opponent_raw,
+            context.metadata_keys,
+            context.metadata_values,
+            context.unknown_metadata,
+        ),
+        "team_card_present": team_raw > 0,
+        "opponent_card_present": opponent_raw > 0,
         "team_evos": _list_matrix(column("team_evolution_levels")),
         "opponent_evos": _list_matrix(column("opponent_evolution_levels")),
         "team_heroes": _list_matrix(column("team_hero_levels")),
@@ -367,7 +477,12 @@ def _assemble_batch(
     out["matrix_prior"] = np.where(swapped, 1.0 - prior, prior)
     tensors: dict[str, torch.Tensor] = {}
     for key, value in out.items():
-        dtype = np.float32 if key in _FLOAT_FIELDS else np.int64
+        if key in _FLOAT_FIELDS:
+            dtype = np.float32
+        elif key in _BOOL_FIELDS:
+            dtype = np.bool_
+        else:
+            dtype = np.int64
         tensors[key] = torch.from_numpy(np.ascontiguousarray(value, dtype=dtype))
     return tensors
 

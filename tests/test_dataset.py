@@ -2,6 +2,10 @@ import numpy as np
 import pyarrow as pa
 import torch
 
+from rigged_matchup_ml.card_stats import (
+    CARD_METADATA_VECTOR_SIZE,
+    UNKNOWN_CARD_METADATA_VECTOR,
+)
 from rigged_matchup_ml.dataset import (
     _assemble_batch,
     _decode_batch,
@@ -45,10 +49,11 @@ def _assert_batch_matches_row(batch: dict, encoded: dict) -> None:
 
 def test_encode_rows_matches_encode_row() -> None:
     sample = row()
-    _assert_batch_matches_row(
-        encode_rows([sample], VOCABULARY),
-        encode_row(sample, VOCABULARY),
-    )
+    encoded = encode_row(sample, VOCABULARY)
+    batch = encode_rows([sample], VOCABULARY)
+    _assert_batch_matches_row(batch, encoded)
+    assert encoded["team_card_metadata"].shape == (8, CARD_METADATA_VECTOR_SIZE)
+    assert encoded["team_card_present"].tolist() == [True] * 8
 
 
 def test_encode_rows_matches_swapped_encode_row() -> None:
@@ -85,6 +90,13 @@ def test_vectorised_batch_matches_encode_rows() -> None:
     expected = encode_rows(rows, VOCABULARY)
     for key, value in expected.items():
         assert torch.equal(batch[key], value), key
+    assert batch["team_card_metadata"].shape == (2, 8, CARD_METADATA_VECTOR_SIZE)
+    assert batch["team_card_present"].dtype == torch.bool
+    assert torch.equal(
+        batch["team_card_metadata"][1, 2],
+        torch.tensor(UNKNOWN_CARD_METADATA_VECTOR, dtype=torch.float32),
+    )
+    assert batch["team_card_present"][1, 2].item() is True
 
 
 def test_vectorised_batch_matches_encode_rows_swapped() -> None:

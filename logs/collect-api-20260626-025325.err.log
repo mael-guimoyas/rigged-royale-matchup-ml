@@ -1,0 +1,212 @@
+CR API elapsed=60s players=739 players/s=12.31 requests=1,016 req/s=16.93 avg_req/s=16.93 accepted=12,455 queued=38,718 429=0
+CR API elapsed=120s players=2,776 players/s=33.94 requests=3,393 req/s=39.61 avg_req/s=28.27 accepted=39,697 queued=50,000 429=0
+CR API elapsed=180s players=4,101 players/s=22.08 requests=4,954 req/s=26.00 avg_req/s=27.52 accepted=60,898 queued=50,000 429=0
+CR API elapsed=240s players=6,006 players/s=31.74 requests=7,246 req/s=38.19 avg_req/s=30.19 accepted=86,449 queued=50,000 429=0
+CR API elapsed=300s players=7,279 players/s=21.07 requests=8,841 req/s=26.40 avg_req/s=29.43 accepted=105,659 queued=50,000 429=0
+CR API elapsed=361s players=8,948 players/s=27.78 requests=10,892 req/s=34.14 avg_req/s=30.21 accepted=131,540 queued=50,000 429=0
+CR API elapsed=421s players=10,381 players/s=23.75 requests=12,693 req/s=29.85 avg_req/s=30.16 accepted=152,873 queued=50,000 429=0
+CR API elapsed=481s players=12,786 players/s=40.07 requests=15,490 req/s=46.61 avg_req/s=32.21 accepted=182,851 queued=50,000 429=0
+CR API elapsed=553s players=14,328 players/s=21.44 requests=17,355 req/s=25.93 avg_req/s=31.39 accepted=200,066 queued=50,000 429=0
+CR API elapsed=613s players=14,852 players/s=8.73 requests=17,950 req/s=9.91 avg_req/s=29.29 accepted=207,760 queued=50,000 429=0
+CR API elapsed=673s players=15,673 players/s=13.66 requests=18,961 req/s=16.82 avg_req/s=28.18 accepted=218,783 queued=50,000 429=0
+CR API elapsed=733s players=16,553 players/s=14.64 requests=19,928 req/s=16.09 avg_req/s=27.19 accepted=229,326 queued=50,000 429=0
++--------------------- Traceback (most recent call last) ---------------------+
+| C:\Users\milo\Desktop\rigged-royale-matchup-ml\src\rigged_matchup_ml\cli.py |
+| :120 in collect_api                                                         |
+|                                                                             |
+|   117     api_token_mode = api_token_mode.strip().lower()                   |
+|   118     if api_token_mode not in {"1", "2", "both"}:                      |
+|   119         raise typer.BadParameter("--api-token-mode must be one of: 1, |
+|       2, both.")                                                            |
+| > 120     result = collect_from_api(                                        |
+|   121         load_config(config),                                          |
+|   122         tags_file=tags_file,                                          |
+|   123         from_supabase=from_supabase,                                  |
+|                                                                             |
+| C:\Users\milo\Desktop\rigged-royale-matchup-ml\src\rigged_matchup_ml\api_co |
+| llect.py:882 in collect_from_api                                            |
+|                                                                             |
+|   879                 done, _ = wait(list(inflight),                        |
+|       return_when=FIRST_COMPLETED)                                          |
+|   880                 for future in done:                                   |
+|   881                     inflight.pop(future)                              |
+| > 882                     records, candidates, seen = future.result()       |
+|   883                     summary["players_processed"] += 1                 |
+|   884                     summary["battles_seen"] += seen                   |
+|   885                     accepted = deduplicator.keep_new(records)         |
+|                                                                             |
+| C:\Users\milo\AppData\Local\Programs\Python\Python313\Lib\concurrent\future |
+| s\_base.py:449 in result                                                    |
+|                                                                             |
+|   446                 if self._state in [CANCELLED,                         |
+|       CANCELLED_AND_NOTIFIED]:                                              |
+|   447                     raise CancelledError()                            |
+|   448                 elif self._state == FINISHED:                         |
+| > 449                     return self.__get_result()                        |
+|   450                                                                       |
+|   451                 self._condition.wait(timeout)                         |
+|   452                                                                       |
+|                                                                             |
+| C:\Users\milo\AppData\Local\Programs\Python\Python313\Lib\concurrent\future |
+| s\_base.py:401 in __get_result                                              |
+|                                                                             |
+|   398     def __get_result(self):                                           |
+|   399         if self._exception is not None:                               |
+|   400             try:                                                      |
+| > 401                 raise self._exception                                 |
+|   402             finally:                                                  |
+|   403                 # Break a reference cycle with the exception in       |
+|       self._exception                                                       |
+|   404                 self = None                                           |
+|                                                                             |
+| C:\Users\milo\AppData\Local\Programs\Python\Python313\Lib\concurrent\future |
+| s\thread.py:59 in run                                                       |
+|                                                                             |
+|    56             return                                                    |
+|    57                                                                       |
+|    58         try:                                                          |
+| >  59             result = self.fn(*self.args, **self.kwargs)               |
+|    60         except BaseException as exc:                                  |
+|    61             self.future.set_exception(exc)                            |
+|    62             # Break a reference cycle with the exception 'exc'        |
+|                                                                             |
+| C:\Users\milo\Desktop\rigged-royale-matchup-ml\src\rigged_matchup_ml\api_co |
+| llect.py:671 in _fetch_player                                               |
+|                                                                             |
+|   668     writes happen here so it is safe to run on many threads.          |
+|   669     """                                                               |
+|   670     try:                                                              |
+| > 671         battles = client.battlelog(tag)                               |
+|   672     except (urllib.error.URLError, urllib.error.HTTPError,            |
+|       TimeoutError):                                                        |
+|   673         return [], [], 0                                              |
+|   674     league: int | None = None                                         |
+|                                                                             |
+| C:\Users\milo\Desktop\rigged-royale-matchup-ml\src\rigged_matchup_ml\api_co |
+| llect.py:423 in battlelog                                                   |
+|                                                                             |
+|   420         return self._get(f"/players/{_encode_tag(tag)}")              |
+|   421                                                                       |
+|   422     def battlelog(self, tag: str) -> list[dict[str, Any]]:            |
+| > 423         result = self._get(f"/players/{_encode_tag(tag)}/battlelog")  |
+|   424         return result if isinstance(result, list) else []             |
+|   425                                                                       |
+|   426                                                                       |
+|                                                                             |
+| C:\Users\milo\Desktop\rigged-royale-matchup-ml\src\rigged_matchup_ml\api_co |
+| llect.py:382 in _get                                                        |
+|                                                                             |
+|   379             self._limiters[token_name].acquire()                      |
+|   380             self._bump("requests", token_name)                        |
+|   381             try:                                                      |
+| > 382                 with urllib.request.urlopen(request, timeout=20) as   |
+|       response:                                                             |
+|   383                     return                                            |
+|       json.loads(response.read().decode("utf-8"))                           |
+|   384             except urllib.error.HTTPError as error:                   |
+|   385                 if error.code == 404:                                 |
+|                                                                             |
+| C:\Users\milo\AppData\Local\Programs\Python\Python313\Lib\urllib\request.py |
+| :189 in urlopen                                                             |
+|                                                                             |
+|    186         _opener = opener = build_opener()                            |
+|    187     else:                                                            |
+|    188         opener = _opener                                             |
+| >  189     return opener.open(url, data, timeout)                           |
+|    190                                                                      |
+|    191 def install_opener(opener):                                          |
+|    192     global _opener                                                   |
+|                                                                             |
+| C:\Users\milo\AppData\Local\Programs\Python\Python313\Lib\urllib\request.py |
+| :489 in open                                                                |
+|                                                                             |
+|    486             req = meth(req)                                          |
+|    487                                                                      |
+|    488         sys.audit('urllib.Request', req.full_url, req.data,          |
+|        req.headers, req.get_method())                                       |
+| >  489         response = self._open(req, data)                             |
+|    490                                                                      |
+|    491         # post-process response                                      |
+|    492         meth_name = protocol+"_response"                             |
+|                                                                             |
+| C:\Users\milo\AppData\Local\Programs\Python\Python313\Lib\urllib\request.py |
+| :506 in _open                                                               |
+|                                                                             |
+|    503             return result                                            |
+|    504                                                                      |
+|    505         protocol = req.type                                          |
+| >  506         result = self._call_chain(self.handle_open, protocol,        |
+|        protocol +                                                           |
+|    507                                   '_open', req)                      |
+|    508         if result:                                                   |
+|    509             return result                                            |
+|                                                                             |
+| C:\Users\milo\AppData\Local\Programs\Python\Python313\Lib\urllib\request.py |
+| :466 in _call_chain                                                         |
+|                                                                             |
+|    463         handlers = chain.get(kind, ())                               |
+|    464         for handler in handlers:                                     |
+|    465             func = getattr(handler, meth_name)                       |
+| >  466             result = func(*args)                                     |
+|    467             if result is not None:                                   |
+|    468                 return result                                        |
+|    469                                                                      |
+|                                                                             |
+| C:\Users\milo\AppData\Local\Programs\Python\Python313\Lib\urllib\request.py |
+| :1367 in https_open                                                         |
+|                                                                             |
+|   1364             self._context = context                                  |
+|   1365                                                                      |
+|   1366         def https_open(self, req):                                   |
+| > 1367             return self.do_open(http.client.HTTPSConnection, req,    |
+|   1368                                 context=self._context)               |
+|   1369                                                                      |
+|   1370         https_request = AbstractHTTPHandler.do_request_              |
+|                                                                             |
+| C:\Users\milo\AppData\Local\Programs\Python\Python313\Lib\urllib\request.py |
+| :1323 in do_open                                                            |
+|                                                                             |
+|   1320                           encode_chunked=req.has_header('Transfer-en |
+|        coding'))                                                            |
+|   1321             except OSError as err: # timeout error                   |
+|   1322                 raise URLError(err)                                  |
+| > 1323             r = h.getresponse()                                      |
+|   1324         except:                                                      |
+|   1325             h.close()                                                |
+|   1326             raise                                                    |
+|                                                                             |
+| C:\Users\milo\AppData\Local\Programs\Python\Python313\Lib\http\client.py:14 |
+| 30 in getresponse                                                           |
+|                                                                             |
+|   1427                                                                      |
+|   1428         try:                                                         |
+|   1429             try:                                                     |
+| > 1430                 response.begin()                                     |
+|   1431             except ConnectionError:                                  |
+|   1432                 self.close()                                         |
+|   1433                 raise                                                |
+|                                                                             |
+| C:\Users\milo\AppData\Local\Programs\Python\Python313\Lib\http\client.py:33 |
+| 1 in begin                                                                  |
+|                                                                             |
+|    328                                                                      |
+|    329         # read until we get a non-100 response                       |
+|    330         while True:                                                  |
+| >  331             version, status, reason = self._read_status()            |
+|    332             if status != CONTINUE:                                   |
+|    333                 break                                                |
+|    334             # skip the header from the 100 response                  |
+|                                                                             |
+| C:\Users\milo\AppData\Local\Programs\Python\Python313\Lib\http\client.py:30 |
+| 0 in _read_status                                                           |
+|                                                                             |
+|    297         if not line:                                                 |
+|    298             # Presumably, the server closed the connection before    |
+|    299             # sending a valid response.                              |
+| >  300             raise RemoteDisconnected("Remote end closed connection   |
+|        without"                                                             |
+|    301                                      " response")                    |
+|    302         try:                                                         |
+|    303             version, status, reason = line.split(None, 2)            |
++-----------------------------------------------------------------------------+
+RemoteDisconnected: Remote end closed connection without response

@@ -286,9 +286,10 @@ class BalancedFrontier:
     def add(self, candidates: list[tuple[str, str, int | None]]) -> int:
         """Queue new candidates by prospective band. Returns count skipped as low."""
         skipped = 0
-        if self._max_queued is not None and len(self._queued) >= self._max_queued:
-            return skipped
+        active_queued = self.queue_size()
         for tag, mode_key, trophies in candidates:
+            if self._max_queued is not None and active_queued >= self._max_queued:
+                break
             if not tag or tag in self._queued:
                 continue
             bucket = self._classify(mode_key, trophies)
@@ -297,6 +298,7 @@ class BalancedFrontier:
                 continue
             self._queued.add(tag)
             self._queues.setdefault(bucket, deque()).append(tag)
+            active_queued += 1
         return skipped
 
     def next_tag(self) -> str | None:
@@ -710,6 +712,7 @@ def collect_from_api(
     bucket: str = "training-battles",
     prefix: str = "battles",
     shard_size: int = 50_000,
+    max_queue: int | None = None,
     min_trophies: int | None = None,
     balance: bool = True,
     api_token_mode: str = "1",
@@ -748,7 +751,9 @@ def collect_from_api(
         if balance
         else Counter()
     )
-    max_queued = max_players * 4 if max_players is not None else None
+    max_queued = max_queue if max_queue is not None else (
+        max_players * 4 if max_players is not None else None
+    )
     frontier = BalancedFrontier(seeds, trophy_buckets, min_trophies, baseline_counts, max_queued)
 
     shard_index = _next_shard_index(raw_dir)
@@ -769,6 +774,7 @@ def collect_from_api(
         "effective_workers": effective_workers,
         "progress": show_progress,
         "stats_interval_seconds": stats_interval_seconds,
+        "max_queue": max_queued,
     }
     run_by_segment: Counter[str] = Counter()
     progress = tqdm(desc="CR API players", unit="player", disable=not show_progress)
@@ -903,6 +909,7 @@ def collect_from_api(
     summary["rate_limited"] = client.rate_limited
     summary["request_errors"] = client.errors
     summary["api_token_stats"] = client.token_stats
+    summary["queued"] = frontier.queue_size()
     summary["bucket"] = bucket if upload else None
     summary["raw_dir"] = str(raw_dir)
     summary["accepted_by_segment"] = dict(run_by_segment)

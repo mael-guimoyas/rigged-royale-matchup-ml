@@ -155,8 +155,12 @@ def _interactions_for_row(
     if not maps:
         return None
 
-    team_valid = [int(value) != 0 for value in forward["team_cards"][0].tolist()]
-    opponent_valid = [int(value) != 0 for value in forward["opponent_cards"][0].tolist()]
+    team_present = forward.get("team_card_present", forward["team_cards"].ne(0))
+    opponent_present = forward.get(
+        "opponent_card_present", forward["opponent_cards"].ne(0)
+    )
+    team_valid = [bool(value) for value in team_present[0].tolist()]
+    opponent_valid = [bool(value) for value in opponent_present[0].tolist()]
 
     answers: list[dict[str, Any]] = []
     threats: list[dict[str, Any]] = []
