@@ -275,7 +275,9 @@ CHAMPION_ABILITY: dict[int, tuple[int, tuple[str, ...]]] = {
     26000072: (1, ("ability_shield", "ability_buff")),     # Archer Queen - Cloaking Cape
     26000074: (1, ("ability_dash",)),                      # Golden Knight - Dashing Dash
     26000077: (1, ("ability_shield", "ability_control")),  # Monk - Brushing Strike (deflect)
-    26000081: (2, ("ability_damage", "ability_dash")),     # Terry (uncertain - verify)
+    # Terry: defunct temporary event champion, kept for historical battle data.
+    # "Hoggy Height" -- leaps and slams for 360 area damage + knockback (1 elixir).
+    26000081: (1, ("ability_damage", "ability_control")),  # Terry - Hoggy Height
     26000093: (3, ("ability_spawn",)),                     # Little Prince - Summon Guardian
     26000099: (2, ("ability_damage",)),                    # Goblinstein - electric surge
     26000103: (1, ("ability_dash",)),                      # Boss Bandit - reset + dash
@@ -306,24 +308,33 @@ HERO_ABILITY: dict[int, tuple[int, tuple[str, ...]]] = {
 # the evos curated with confidence; any other evolved card still gets the generic
 # ``evolved`` flag at runtime. cycles/tags are best-effort -- verify.
 EVO_EFFECT: dict[int, tuple[int, tuple[str, ...]]] = {
-    26000000: (2, ("evo_charge", "evo_shield")),     # Evo Knight - charge + damage reduction
+    26000000: (2, ("evo_shield", "evo_control")),    # Evo Knight - shield + taunt/pull troops
     26000001: (2, ("evo_damage",)),                  # Evo Archers - Power Shot + range
-    26000008: (2, ("evo_buff",)),                    # Evo Barbarians - rage on attack
-    26000010: (3, ("evo_spawn", "evo_buff")),        # Evo Skeletons - extra skeleton + atk speed
-    26000011: (2, ("evo_splash", "evo_shield")),     # Evo Valkyrie - wider spin + damage reduction
-    26000013: (2, ("evo_splash", "evo_damage")),     # Evo Bomber - bouncing bomb
+    26000004: (2, ("evo_buff",)),                    # Evo P.E.K.K.A - heals on kill
+    26000008: (2, ("evo_buff",)),                    # Evo Barbarians - +HP, speed, attack speed
+    26000010: (1, ("evo_spawn", "evo_buff")),        # Evo Skeletons - extra skeleton + atk speed
+    26000011: (2, ("evo_splash", "evo_control")),    # Evo Valkyrie - tornado lures troops in
+    26000012: (2, ("evo_spawn",)),                   # Evo Skeleton Army - ghosts survive
+    26000013: (2, ("evo_splash", "evo_damage")),     # Evo Bomber - bomb bounces twice
+    26000014: (2, ("evo_damage",)),                  # Evo Musketeer - long-range triple shot
+    26000015: (2, ("evo_control", "evo_buff")),      # Evo Baby Dragon - gusts slow foes/speed allies
     26000017: (2, ("evo_shield", "evo_splash")),     # Evo Wizard - shield + bigger splash
-    26000024: (2, ("evo_damage",)),                  # Evo Royal Giant - knockback / anti-swarm
-    26000030: (2, ("evo_splash",)),                  # Evo Ice Spirit - multi-bounce freeze
-    26000044: (2, ("evo_damage",)),                  # Evo Hunter - extra bullets
+    26000024: (2, ("evo_control", "evo_damage")),    # Evo Royal Giant - knockback on every shot
+    26000030: (1, ("evo_control",)),                 # Evo Ice Spirit - freezes twice
+    26000035: (2, ("evo_spawn", "evo_buff")),        # Evo Lumberjack - rage ghost on death
+    26000044: (2, ("evo_control",)),                 # Evo Hunter - net slows/stuns tanks
+    26000045: (2, ("evo_control",)),                 # Evo Executioner - axe pushes + pulls
     26000047: (3, ("evo_shield", "evo_charge")),     # Evo Royal Recruits - shield + dash
-    26000004: (2, ("evo_shield",)),                  # Evo P.E.K.K.A - damage reflect
-    26000050: (2, ("evo_spawn",)),                   # Evo Royal Ghost - spawns 2 soldiers
-    26000055: (2, ("evo_splash", "evo_damage")),     # Evo Mega Knight - bigger jump + spawn dmg
-    26000049: (2, ("evo_buff",)),                    # Evo Bats - lifesteal / heal
-    26000064: (2, ("evo_splash", "evo_damage")),     # Evo Firecracker - extra recoil sparks
-    27000002: (3, ("evo_damage", "evo_splash")),     # Evo Mortar - rolling boulder
-    28000008: (2, ("evo_splash", "evo_damage")),     # Evo Zap - expanding multi shockwave
+    26000049: (1, ("evo_buff",)),                    # Evo Bats - lifesteal / heal
+    26000050: (2, ("evo_spawn",)),                   # Evo Royal Ghost - spawns 2 Souldiers
+    26000055: (2, ("evo_splash", "evo_control")),    # Evo Mega Knight - jump + knockback
+    26000056: (2, ("evo_damage",)),                  # Evo Skeleton Barrel - destroys tower intact
+    26000059: (2, ("evo_buff",)),                    # Evo Royal Hogs - gain flight
+    26000064: (2, ("evo_splash", "evo_damage")),     # Evo Firecracker - lingering AoE field
+    27000002: (3, ("evo_spawn", "evo_damage")),      # Evo Mortar - spawns Goblins on hit
+    27000010: (2, ("evo_spawn",)),                   # Evo Furnace - spawns Fire Spirit each attack
+    28000004: (2, ("evo_spawn",)),                   # Evo Goblin Barrel - spawns two barrels
+    28000008: (2, ("evo_control", "evo_damage")),    # Evo Zap - double zap, second stuns wider
 }
 
 

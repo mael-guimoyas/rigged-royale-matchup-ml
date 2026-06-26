@@ -140,6 +140,7 @@ CARD_EVO_TAGS: tuple[str, ...] = (
     "evo_charge",
     "evo_splash",
     "evo_buff",
+    "evo_control",  # taunt / freeze / stun / knockback / pull
 )
 MAX_ABILITY_ELIXIR = 9
 MAX_EVO_CYCLE = 6

@@ -117,8 +117,9 @@ def test_evolved_form_activates_evo_block() -> None:
     evo = metadata_vector_for(26000000, evolved=True)
     assert base[idx["state:evolved"]] == 0.0
     assert evo[idx["state:evolved"]] == 1.0
-    # Evo Knight gains a charge.
-    assert evo[idx["evo:evo_charge"]] == 1.0
+    # Evo Knight gains a shield and taunts/pulls nearby troops onto itself.
+    assert evo[idx["evo:evo_shield"]] == 1.0
+    assert evo[idx["evo:evo_control"]] == 1.0
 
 
 def test_champion_ability_is_always_active() -> None:
