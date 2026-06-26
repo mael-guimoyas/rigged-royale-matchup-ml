@@ -318,7 +318,7 @@ EVO_EFFECT: dict[int, tuple[int, tuple[str, ...]]] = {
     26000013: (2, ("evo_splash", "evo_damage")),     # Evo Bomber - bomb bounces twice
     26000014: (2, ("evo_damage",)),                  # Evo Musketeer - long-range triple shot
     26000015: (2, ("evo_control", "evo_buff")),      # Evo Baby Dragon - gusts slow foes/speed allies
-    26000017: (2, ("evo_shield", "evo_splash")),     # Evo Wizard - shield + bigger splash
+    26000017: (2, ("evo_shield",)),                  # Evo Wizard - shield (no splash boost)
     26000024: (2, ("evo_control", "evo_damage")),    # Evo Royal Giant - knockback on every shot
     26000030: (1, ("evo_control",)),                 # Evo Ice Spirit - freezes twice
     26000035: (2, ("evo_spawn", "evo_buff")),        # Evo Lumberjack - rage ghost on death
@@ -327,14 +327,14 @@ EVO_EFFECT: dict[int, tuple[int, tuple[str, ...]]] = {
     26000047: (3, ("evo_shield", "evo_charge")),     # Evo Royal Recruits - shield + dash
     26000049: (1, ("evo_buff",)),                    # Evo Bats - lifesteal / heal
     26000050: (2, ("evo_spawn",)),                   # Evo Royal Ghost - spawns 2 Souldiers
-    26000055: (2, ("evo_splash", "evo_control")),    # Evo Mega Knight - jump + knockback
+    26000055: (2, ("evo_control",)),                 # Evo Mega Knight - knockback (no splash boost)
     26000056: (2, ("evo_damage",)),                  # Evo Skeleton Barrel - destroys tower intact
     26000059: (2, ("evo_buff",)),                    # Evo Royal Hogs - gain flight
     26000064: (2, ("evo_splash", "evo_damage")),     # Evo Firecracker - lingering AoE field
     27000002: (3, ("evo_spawn", "evo_damage")),      # Evo Mortar - spawns Goblins on hit
     27000010: (2, ("evo_spawn",)),                   # Evo Furnace - spawns Fire Spirit each attack
     28000004: (2, ("evo_spawn",)),                   # Evo Goblin Barrel - spawns two barrels
-    28000008: (2, ("evo_control", "evo_damage")),    # Evo Zap - double zap, second stuns wider
+    28000008: (2, ("evo_buff", "evo_damage")),       # Evo Zap - double zap (buff/damage)
 }
 
 

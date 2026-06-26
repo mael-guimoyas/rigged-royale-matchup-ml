@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "generated_at": "2026-06-26T21:02:18+00:00",
+  "generated_at": "2026-06-26T21:08:35+00:00",
   "source": {
     "method": "hand-curated taxonomy (offline, no scraping)",
     "generator": "scripts/refresh_card_metadata.py::CARD_TABLE"
@@ -768,8 +768,7 @@
       "evo": {
         "cycle": 2,
         "tags": [
-          "evo_shield",
-          "evo_splash"
+          "evo_shield"
         ]
       }
     },
@@ -2127,7 +2126,6 @@
       "evo": {
         "cycle": 2,
         "tags": [
-          "evo_splash",
           "evo_control"
         ]
       }
@@ -4297,7 +4295,7 @@
       "evo": {
         "cycle": 2,
         "tags": [
-          "evo_control",
+          "evo_buff",
           "evo_damage"
         ]
       }
