@@ -38,12 +38,38 @@ def prepare_splits(config: AppConfig, overwrite: bool = False) -> dict[str, Any]
     validation_boundary = train_fraction + validation_fraction
     connection = duckdb.connect()
     connection.execute("set preserve_insertion_order=false")
+    # Collect's SQLite dedup only spans a single collect run; if it was reset
+    # between runs, the same game_id was written into multiple Storage shards.
+    # pull-storage downloads them all, so dedup globally here (one row per
+    # game_id) before splitting -- otherwise ~1M duplicate battles leak into
+    # train/val/test. A duplicate game_id is the same battle (same battle_time),
+    # so it always lands in the same split; deduping at read is safe.
+    _log("prepare: deduplicating raw shards by game_id")
+    connection.execute(
+        f"""
+        create temporary view raw_dedup as
+        select * from read_parquet('{raw_glob}')
+        qualify row_number() over (partition by game_id order by inserted_at) = 1
+        """
+    )
+    raw_total, dedup_total = connection.execute(
+        f"""
+        select
+          (select count(*) from read_parquet('{raw_glob}')),
+          (select count(*) from raw_dedup)
+        """
+    ).fetchone()
+    _log(
+        f"prepare: rows raw={raw_total:,} unique={dedup_total:,} "
+        f"duplicates_removed={raw_total - dedup_total:,}"
+    )
     _log("prepare: computing chronological train/validation cutoffs")
     quantiles = connection.execute(
-        f"""
-        select quantile_cont(epoch(battle_time), [{train_fraction}, {validation_boundary}])
-        from read_parquet('{raw_glob}')
         """
+        select quantile_cont(epoch(battle_time), [?, ?])
+        from raw_dedup
+        """,
+        [train_fraction, validation_boundary],
     ).fetchone()[0]
     train_cutoff, validation_cutoff = quantiles
 
@@ -63,7 +89,7 @@ def prepare_splits(config: AppConfig, overwrite: bool = False) -> dict[str, Any]
         connection.execute(
             f"""
             copy (
-              select * from read_parquet('{raw_glob}') where {condition}
+              select * from raw_dedup where {condition}
             ) to '{output}' (format parquet, compression zstd, row_group_size 100000)
             """
         )
@@ -139,6 +165,9 @@ def prepare_splits(config: AppConfig, overwrite: bool = False) -> dict[str, Any]
     )
     manifest = {
         "counts": counts,
+        "raw_rows": raw_total,
+        "unique_rows": dedup_total,
+        "duplicates_removed": raw_total - dedup_total,
         "train_cutoff_epoch": train_cutoff,
         "validation_cutoff_epoch": validation_cutoff,
         "vocabulary_sizes": {key: len(value) + 1 for key, value in vocabulary.items()},
