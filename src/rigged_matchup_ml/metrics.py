@@ -181,17 +181,23 @@ def binary_metrics_by_group(
     bins: int = 15,
     bootstrap_samples: int = 0,
     bootstrap_seed: int = 0,
+    bootstrap_max_rows: int = 0,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for group in sorted({str(value) for value in groups.tolist()}):
         mask = groups.astype(str) == group
         if not np.any(mask):
             continue
+        # Skip the bootstrap on large groups -- the CI is negligible there and
+        # the resampling is the eval's main cost. 0 keeps the old behaviour.
+        group_bootstrap = bootstrap_samples
+        if bootstrap_max_rows and int(mask.sum()) > bootstrap_max_rows:
+            group_bootstrap = 0
         result[group] = binary_metrics(
             targets[mask],
             probabilities[mask],
             bins,
-            bootstrap_samples=bootstrap_samples,
+            bootstrap_samples=group_bootstrap,
             bootstrap_seed=bootstrap_seed,
         )
     return result

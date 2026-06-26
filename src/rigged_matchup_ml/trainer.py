@@ -555,11 +555,19 @@ def evaluate_checkpoint(config: AppConfig, checkpoint_path: Path) -> dict[str, A
     )
     bootstrap_samples = int(config.evaluation.get("bootstrap_samples", 0))
     bootstrap_seed = int(config.training.get("seed", 0))
+    # Bootstrap CIs only matter on small splits; on the full test set (millions
+    # of rows) the point estimate is already razor-sharp and 300 resamples x AUC
+    # sort over the whole array is minutes of pointless CPU work. Auto-skip above
+    # the threshold (0 disables the guard, keeping the old behaviour).
+    bootstrap_max_rows = int(config.evaluation.get("bootstrap_max_rows", 250_000))
+    overall_bootstrap = bootstrap_samples
+    if bootstrap_max_rows and len(targets) > bootstrap_max_rows:
+        overall_bootstrap = 0
     metrics = binary_metrics(
         targets,
         probabilities,
         int(config.evaluation["calibration_bins"]),
-        bootstrap_samples=bootstrap_samples,
+        bootstrap_samples=overall_bootstrap,
         bootstrap_seed=bootstrap_seed,
     )
     metrics["by_segment"] = binary_metrics_by_group(
@@ -569,6 +577,7 @@ def evaluate_checkpoint(config: AppConfig, checkpoint_path: Path) -> dict[str, A
         int(config.evaluation["calibration_bins"]),
         bootstrap_samples=bootstrap_samples,
         bootstrap_seed=bootstrap_seed,
+        bootstrap_max_rows=bootstrap_max_rows,
     )
     output = checkpoint_path.with_name("test-metrics.json")
     output.write_text(json.dumps(metrics, indent=2), encoding="utf-8")

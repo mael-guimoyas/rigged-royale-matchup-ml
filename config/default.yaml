@@ -99,3 +99,7 @@ evaluation:
   # Bootstrap resamples for confidence intervals on AUC/Brier/log-loss/accuracy.
   # Essential on small unseen-matchup splits. Set 0 to disable.
   bootstrap_samples: 300
+  # Skip the bootstrap on any split/segment larger than this -- on millions of
+  # rows the CI is already negligible and 300x AUC resamples is the slow part of
+  # the end-of-training eval. 0 disables the guard (always bootstrap).
+  bootstrap_max_rows: 250000
