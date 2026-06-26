@@ -36,7 +36,9 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from rigged_matchup_ml.card_stats import (  # noqa: E402
+    CARD_ABILITY_TAGS,
     CARD_ELIXIR,
+    CARD_EVO_TAGS,
     CARD_METADATA_FLAGS,
     CARD_METADATA_NUMERIC_FEATURES,
     CARD_METADATA_ROLES,
@@ -264,6 +266,89 @@ CARD_NAMES: dict[int, str] = {
 }
 
 
+# --- State-dependent effects ------------------------------------------------
+# Champion always-on button ability, keyed by the champion's own card id.
+# (cost in elixir to activate, effect tags). Sources: Clash Royale Wiki / RoyaleAPI.
+CHAMPION_ABILITY: dict[int, tuple[int, tuple[str, ...]]] = {
+    26000065: (1, ("ability_damage", "ability_dash")),     # Mighty Miner - Explosive Escape
+    26000069: (2, ("ability_spawn",)),                     # Skeleton King - Soul Summoning
+    26000072: (1, ("ability_shield", "ability_buff")),     # Archer Queen - Cloaking Cape
+    26000074: (1, ("ability_dash",)),                      # Golden Knight - Dashing Dash
+    26000077: (1, ("ability_shield", "ability_control")),  # Monk - Brushing Strike (deflect)
+    26000081: (2, ("ability_damage", "ability_dash")),     # Terry (uncertain - verify)
+    26000093: (3, ("ability_spawn",)),                     # Little Prince - Summon Guardian
+    26000099: (2, ("ability_damage",)),                    # Goblinstein - electric surge
+    26000103: (1, ("ability_dash",)),                      # Boss Bandit - reset + dash
+}
+
+# Hero button ability, keyed by the BASE card id; applies only when the card is
+# fielded in hero form (heroLevel > 0). cost = elixir to activate the ability.
+# Several ability costs are best-effort estimates -- verify against the wiki.
+HERO_ABILITY: dict[int, tuple[int, tuple[str, ...]]] = {
+    26000000: (2, ("ability_control",)),                   # Hero Knight - Royal Taunt
+    26000003: (3, ("ability_control",)),                   # Hero Giant - Heroic Hurl
+    26000018: (2, ("ability_buff",)),                      # Hero Mini P.E.K.K.A - Breakfast Boost
+    26000014: (3, ("ability_spawn",)),                     # Hero Musketeer - Trusty Turret
+    26000038: (2, ("ability_control",)),                   # Hero Ice Golem - Blizzard
+    26000017: (1, ("ability_damage",)),                    # Hero Wizard - fire blast
+    26000002: (2, ("ability_spawn",)),                     # Hero Goblins - Banner Brigade (respawn)
+    26000039: (2, ("ability_dash", "ability_damage")),     # Hero Mega Minion - Wounding Warp
+    28000015: (2, ("ability_damage",)),                    # Hero Barbarian Barrel - second roll
+    26000062: (1, ("ability_damage",)),                    # Hero Magic Archer - Triple Threat
+    26000006: (2, ("ability_spawn",)),                     # Hero Balloon - Coffin Cadets
+    26000027: (3, ("ability_damage", "ability_dash")),     # Hero Dark Prince - Destructive Dismount
+    26000034: (2, ("ability_damage",)),                    # Hero Bowler - Stone Swish
+    27000009: (6, ("ability_spawn",)),                     # Hero Tombstone - Regal Revival
+}
+
+# Evolution effects, keyed by base card id; apply only when fielded evolved
+# (evolutionLevel > 0). (cycle = cycles to charge the evo, effect tags). Covers
+# the evos curated with confidence; any other evolved card still gets the generic
+# ``evolved`` flag at runtime. cycles/tags are best-effort -- verify.
+EVO_EFFECT: dict[int, tuple[int, tuple[str, ...]]] = {
+    26000000: (2, ("evo_charge", "evo_shield")),     # Evo Knight - charge + damage reduction
+    26000001: (2, ("evo_damage",)),                  # Evo Archers - Power Shot + range
+    26000008: (2, ("evo_buff",)),                    # Evo Barbarians - rage on attack
+    26000010: (3, ("evo_spawn", "evo_buff")),        # Evo Skeletons - extra skeleton + atk speed
+    26000011: (2, ("evo_splash", "evo_shield")),     # Evo Valkyrie - wider spin + damage reduction
+    26000013: (2, ("evo_splash", "evo_damage")),     # Evo Bomber - bouncing bomb
+    26000017: (2, ("evo_shield", "evo_splash")),     # Evo Wizard - shield + bigger splash
+    26000024: (2, ("evo_damage",)),                  # Evo Royal Giant - knockback / anti-swarm
+    26000030: (2, ("evo_splash",)),                  # Evo Ice Spirit - multi-bounce freeze
+    26000044: (2, ("evo_damage",)),                  # Evo Hunter - extra bullets
+    26000047: (3, ("evo_shield", "evo_charge")),     # Evo Royal Recruits - shield + dash
+    26000004: (2, ("evo_shield",)),                  # Evo P.E.K.K.A - damage reflect
+    26000050: (2, ("evo_spawn",)),                   # Evo Royal Ghost - spawns 2 soldiers
+    26000055: (2, ("evo_splash", "evo_damage")),     # Evo Mega Knight - bigger jump + spawn dmg
+    26000049: (2, ("evo_buff",)),                    # Evo Bats - lifesteal / heal
+    26000064: (2, ("evo_splash", "evo_damage")),     # Evo Firecracker - extra recoil sparks
+    27000002: (3, ("evo_damage", "evo_splash")),     # Evo Mortar - rolling boulder
+    28000008: (2, ("evo_splash", "evo_damage")),     # Evo Zap - expanding multi shockwave
+}
+
+
+def _ability_payload(table: dict[int, tuple[int, tuple[str, ...]]], card_id: int):
+    entry = table.get(card_id)
+    if entry is None:
+        return None
+    cost, tags = entry
+    bad = [t for t in tags if t not in CARD_ABILITY_TAGS]
+    if bad:
+        raise ValueError(f"{card_id}: bad ability tags {bad}")
+    return {"cost": int(cost), "tags": list(tags)}
+
+
+def _evo_payload(card_id: int):
+    entry = EVO_EFFECT.get(card_id)
+    if entry is None:
+        return None
+    cycle, tags = entry
+    bad = [t for t in tags if t not in CARD_EVO_TAGS]
+    if bad:
+        raise ValueError(f"{card_id}: bad evo tags {bad}")
+    return {"cycle": int(cycle), "tags": list(tags)}
+
+
 def _slug(name: str) -> str:
     value = name.lower().replace(".", "").replace("&", "and")
     value = re.sub(r"[^a-z0-9]+", "-", value).strip("-")
@@ -317,7 +402,12 @@ def _build_card(card_id: int) -> dict[str, Any]:
         raise ValueError(f"{card_id}: numeric missing {missing}")
 
     tags = (role, *flags)
-    return {
+    champion_ability = _ability_payload(CHAMPION_ABILITY, card_id)
+    if champion and champion_ability is None:
+        raise ValueError(f"{card_id}: champion missing CHAMPION_ABILITY entry")
+    if champion_ability is not None and not champion:
+        raise ValueError(f"{card_id}: CHAMPION_ABILITY entry but not a champion")
+    card: dict[str, Any] = {
         "name": CARD_NAMES[card_id],
         "key": _slug(CARD_NAMES[card_id]),
         "type": card_type,
@@ -330,6 +420,15 @@ def _build_card(card_id: int) -> dict[str, Any]:
         "grid": grid_values,  # fine 0-20 (speed 0-8) after nudges
         "numeric": numeric,
     }
+    if champion_ability is not None:
+        card["champion_ability"] = champion_ability
+    hero_ability = _ability_payload(HERO_ABILITY, card_id)
+    if hero_ability is not None:
+        card["hero_ability"] = hero_ability
+    evo = _evo_payload(card_id)
+    if evo is not None:
+        card["evo"] = evo
+    return card
 
 
 def main() -> None:
@@ -342,10 +441,18 @@ def main() -> None:
         raise SystemExit(f"CARD_TABLE has ids absent from CARD_ELIXIR: {extra_in_table}")
     if set(CARD_NAMES) != set(CARD_TABLE):
         raise SystemExit("CARD_NAMES and CARD_TABLE id sets differ")
+    for label, table in (
+        ("HERO_ABILITY", HERO_ABILITY),
+        ("EVO_EFFECT", EVO_EFFECT),
+        ("CHAMPION_ABILITY", CHAMPION_ABILITY),
+    ):
+        unknown = sorted(set(table) - set(CARD_TABLE))
+        if unknown:
+            raise SystemExit(f"{label} has ids absent from CARD_TABLE: {unknown}")
 
     cards = {str(card_id): _build_card(card_id) for card_id in sorted(CARD_TABLE)}
     snapshot = {
-        "schema_version": 2,
+        "schema_version": 3,
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "source": {
             "method": "hand-curated taxonomy (offline, no scraping)",
@@ -356,6 +463,8 @@ def main() -> None:
             "roles": list(CARD_METADATA_ROLES),
             "flags": list(CARD_METADATA_FLAGS),
             "numeric_features": list(CARD_METADATA_NUMERIC_FEATURES),
+            "ability_tags": list(CARD_ABILITY_TAGS),
+            "evo_tags": list(CARD_EVO_TAGS),
             "grid_scales": {
                 "hitpoints": GRID, "damage": GRID, "dps": GRID, "range": GRID,
                 "speed": SPEED_GRID, "elixir": MAX_ELIXIR,

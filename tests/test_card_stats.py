@@ -96,6 +96,39 @@ def test_only_known_tags_present() -> None:
         assert meta["tags"] <= allowed, f"{card_id}: {meta['tags'] - allowed}"
 
 
+def test_hero_form_changes_metadata_vector() -> None:
+    # Same card id; hero form activates the ability block (Hero Musketeer turret).
+    base = metadata_vector_for(26000014, hero=False)
+    hero = metadata_vector_for(26000014, hero=True)
+    assert base != hero
+    idx = {name: i for i, name in enumerate(__import__(
+        "rigged_matchup_ml.card_stats", fromlist=["CARD_METADATA_VECTOR_FIELDS"]
+    ).CARD_METADATA_VECTOR_FIELDS)}
+    assert base[idx["state:ability_active"]] == 0.0
+    assert hero[idx["state:ability_active"]] == 1.0
+    assert hero[idx["ability:ability_spawn"]] == 1.0
+    assert hero[idx["num:ability_cost"]] > 0.0
+
+
+def test_evolved_form_activates_evo_block() -> None:
+    from rigged_matchup_ml.card_stats import CARD_METADATA_VECTOR_FIELDS as fields
+    idx = {name: i for i, name in enumerate(fields)}
+    base = metadata_vector_for(26000000, evolved=False)
+    evo = metadata_vector_for(26000000, evolved=True)
+    assert base[idx["state:evolved"]] == 0.0
+    assert evo[idx["state:evolved"]] == 1.0
+    # Evo Knight gains a charge.
+    assert evo[idx["evo:evo_charge"]] == 1.0
+
+
+def test_champion_ability_is_always_active() -> None:
+    from rigged_matchup_ml.card_stats import CARD_METADATA_VECTOR_FIELDS as fields
+    idx = {name: i for i, name in enumerate(fields)}
+    aq = metadata_vector_for(26000072)  # Archer Queen, champion
+    assert aq[idx["state:ability_active"]] == 1.0
+    assert aq[idx["num:ability_cost"]] > 0.0
+
+
 def test_unknown_and_padding_vectors_are_distinct() -> None:
     unknown = metadata_for(99999999)
     assert unknown["type"] == "unknown"

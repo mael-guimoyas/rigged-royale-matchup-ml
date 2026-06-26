@@ -72,8 +72,16 @@ def encode_row(
         costs = [elixir_for(value) for value in values[:8]]
         return costs + [0] * (8 - len(costs))
 
-    def encode_metadata(values: list[int]) -> list[tuple[float, ...]]:
-        vectors = [metadata_vector_for(value) for value in values[:8]]
+    def encode_metadata(
+        values: list[int], evos: list[int], heroes: list[int]
+    ) -> list[tuple[float, ...]]:
+        cards = values[:8]
+        evo = list(evos[:8]) + [0] * (8 - min(len(evos), 8))
+        hero = list(heroes[:8]) + [0] * (8 - min(len(heroes), 8))
+        vectors = [
+            metadata_vector_for(card, evolved=int(evo[i]) > 0, hero=int(hero[i]) > 0)
+            for i, card in enumerate(cards)
+        ]
         return vectors + [PADDING_CARD_METADATA_VECTOR] * (8 - len(vectors))
 
     def encode_present(values: list[int]) -> list[bool]:
@@ -102,10 +110,20 @@ def encode_row(
             encode_elixir(row[f"{opponent_prefix}_card_ids"]), dtype=torch.long
         ),
         "team_card_metadata": torch.tensor(
-            encode_metadata(row[f"{team_prefix}_card_ids"]), dtype=torch.float32
+            encode_metadata(
+                row[f"{team_prefix}_card_ids"],
+                row[f"{team_prefix}_evolution_levels"],
+                row[f"{team_prefix}_hero_levels"],
+            ),
+            dtype=torch.float32,
         ),
         "opponent_card_metadata": torch.tensor(
-            encode_metadata(row[f"{opponent_prefix}_card_ids"]), dtype=torch.float32
+            encode_metadata(
+                row[f"{opponent_prefix}_card_ids"],
+                row[f"{opponent_prefix}_evolution_levels"],
+                row[f"{opponent_prefix}_hero_levels"],
+            ),
+            dtype=torch.float32,
         ),
         "team_card_present": torch.tensor(
             encode_present(row[f"{team_prefix}_card_ids"]), dtype=torch.bool
@@ -218,12 +236,28 @@ def encode_rows(
         )
         team_raw_cards = list(row[f"{team_prefix}_card_ids"][:8])
         opponent_raw_cards = list(row[f"{opponent_prefix}_card_ids"][:8])
+        team_evo_levels = _fixed_length(row[f"{team_prefix}_evolution_levels"])
+        opponent_evo_levels = _fixed_length(row[f"{opponent_prefix}_evolution_levels"])
+        team_hero_lv = _fixed_length(row[f"{team_prefix}_hero_levels"])
+        opponent_hero_lv = _fixed_length(row[f"{opponent_prefix}_hero_levels"])
         team_card_metadata.append(
-            [metadata_vector_for(c) for c in team_raw_cards]
+            [
+                metadata_vector_for(
+                    c, evolved=int(team_evo_levels[i]) > 0, hero=int(team_hero_lv[i]) > 0
+                )
+                for i, c in enumerate(team_raw_cards)
+            ]
             + [PADDING_CARD_METADATA_VECTOR] * (8 - len(team_raw_cards))
         )
         opponent_card_metadata.append(
-            [metadata_vector_for(c) for c in opponent_raw_cards]
+            [
+                metadata_vector_for(
+                    c,
+                    evolved=int(opponent_evo_levels[i]) > 0,
+                    hero=int(opponent_hero_lv[i]) > 0,
+                )
+                for i, c in enumerate(opponent_raw_cards)
+            ]
             + [PADDING_CARD_METADATA_VECTOR] * (8 - len(opponent_raw_cards))
         )
         team_card_present.append(_fixed_length([int(c) > 0 for c in team_raw_cards]))
@@ -357,19 +391,33 @@ def _lookup(values: np.ndarray, keys: np.ndarray, mapped: np.ndarray) -> np.ndar
     return result.reshape(values.shape).astype(np.int64, copy=False)
 
 
+# Card metadata is form-dependent: the same card id has different ability / evo
+# blocks as base / evolved / hero. We key the lookup table by a composite
+# ``card_id * 4 + variant`` where variant = 2*(hero) + evolved, and expand every
+# card into its four forms.
+_METADATA_VARIANTS = ((False, False), (True, False), (False, True), (True, True))
+
+
 def _metadata_lut(mapping: dict[int, dict]) -> tuple[np.ndarray, np.ndarray]:
-    keys = np.fromiter((int(key) for key in mapping), dtype=np.int64, count=len(mapping))
-    vectors = np.asarray(
-        [metadata_vector_for(int(key)) for key in mapping], dtype=np.float32
-    )
+    composite_keys: list[int] = []
+    vectors: list[tuple[float, ...]] = []
+    for key in mapping:
+        cid = int(key)
+        for variant, (evolved, hero) in enumerate(_METADATA_VARIANTS):
+            composite_keys.append(cid * 4 + variant)
+            vectors.append(metadata_vector_for(cid, evolved=evolved, hero=hero))
+    keys = np.asarray(composite_keys, dtype=np.int64)
+    mat = np.asarray(vectors, dtype=np.float32)
     if keys.size == 0:
-        return keys, vectors.reshape(0, CARD_METADATA_VECTOR_SIZE)
+        return keys, mat.reshape(0, CARD_METADATA_VECTOR_SIZE)
     order = np.argsort(keys, kind="stable")
-    return keys[order], vectors[order]
+    return keys[order], mat[order]
 
 
 def _lookup_metadata(
     values: np.ndarray,
+    evos: np.ndarray,
+    heroes: np.ndarray,
     keys: np.ndarray,
     mapped: np.ndarray,
     unknown: np.ndarray,
@@ -378,12 +426,17 @@ def _lookup_metadata(
     flat = values.reshape(-1)
     out_flat = out.reshape(flat.shape[0], CARD_METADATA_VECTOR_SIZE)
     real_card = flat > 0
+    # Unknown real cards get the form-independent unknown base (no ability/evo).
     out_flat[real_card] = unknown
     if keys.size == 0:
         return out
-    position = np.searchsorted(keys, flat)
+    variant = 2 * (heroes.reshape(-1) > 0).astype(np.int64) + (
+        evos.reshape(-1) > 0
+    ).astype(np.int64)
+    composite = flat * 4 + variant
+    position = np.searchsorted(keys, composite)
     np.clip(position, 0, keys.size - 1, out=position)
-    hit = (keys[position] == flat) & real_card
+    hit = (keys[position] == composite) & real_card
     out_flat[hit] = mapped[position[hit]]
     return out
 
@@ -412,6 +465,10 @@ def _decode_batch(batch, context: _EncodeContext) -> dict[str, np.ndarray]:
     column = batch.column
     team_raw = _list_matrix(column("team_card_ids"))
     opponent_raw = _list_matrix(column("opponent_card_ids"))
+    team_evos = _list_matrix(column("team_evolution_levels"))
+    opponent_evos = _list_matrix(column("opponent_evolution_levels"))
+    team_heroes = _list_matrix(column("team_hero_levels"))
+    opponent_heroes = _list_matrix(column("opponent_hero_levels"))
     tower_team = column("team_tower_troop_id").to_numpy(zero_copy_only=False).astype(str)
     tower_opponent = column("opponent_tower_troop_id").to_numpy(zero_copy_only=False).astype(str)
     return {
@@ -421,22 +478,26 @@ def _decode_batch(batch, context: _EncodeContext) -> dict[str, np.ndarray]:
         "opponent_elixir": _lookup(opponent_raw, context.elixir_keys, context.elixir_values),
         "team_card_metadata": _lookup_metadata(
             team_raw,
+            team_evos,
+            team_heroes,
             context.metadata_keys,
             context.metadata_values,
             context.unknown_metadata,
         ),
         "opponent_card_metadata": _lookup_metadata(
             opponent_raw,
+            opponent_evos,
+            opponent_heroes,
             context.metadata_keys,
             context.metadata_values,
             context.unknown_metadata,
         ),
         "team_card_present": team_raw > 0,
         "opponent_card_present": opponent_raw > 0,
-        "team_evos": _list_matrix(column("team_evolution_levels")),
-        "opponent_evos": _list_matrix(column("opponent_evolution_levels")),
-        "team_heroes": _list_matrix(column("team_hero_levels")),
-        "opponent_heroes": _list_matrix(column("opponent_hero_levels")),
+        "team_evos": team_evos,
+        "opponent_evos": opponent_evos,
+        "team_heroes": team_heroes,
+        "opponent_heroes": opponent_heroes,
         "team_roles": _list_matrix(column("team_card_roles")),
         "opponent_roles": _list_matrix(column("opponent_card_roles")),
         "team_tower": _lookup(tower_team, context.tower_keys, context.tower_values),

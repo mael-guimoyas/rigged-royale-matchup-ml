@@ -114,12 +114,52 @@ CARD_METADATA_NUMERIC_FEATURES: tuple[str, ...] = (
     "speed",
     "range",
 )
+
+# State-dependent blocks. A card id is the same for its base / evolved / hero
+# form in the battlelog (only evolutionLevel / heroLevel distinguish them), so
+# these effects are gated on the card's *form* at encode time, not just its id.
+#
+# Ability block -- a champion's always-on ability, or a hero card's button
+# ability (active only when the card is fielded as a hero). What the ability
+# *does*, plus its elixir cost.
+CARD_ABILITY_TAGS: tuple[str, ...] = (
+    "ability_spawn",
+    "ability_damage",
+    "ability_dash",
+    "ability_buff",
+    "ability_control",
+    "ability_shield",
+)
+# Evolution block -- what an Evolution changes versus the base card (some evos
+# genuinely differ from their base), plus the evo cycle (how many cycles to
+# charge). Active only when the card is fielded evolved.
+CARD_EVO_TAGS: tuple[str, ...] = (
+    "evo_spawn",
+    "evo_damage",
+    "evo_shield",
+    "evo_charge",
+    "evo_splash",
+    "evo_buff",
+)
+MAX_ABILITY_ELIXIR = 9
+MAX_EVO_CYCLE = 6
+
 CARD_METADATA_VECTOR_FIELDS: tuple[str, ...] = (
     *(f"type:{name}" for name in CARD_METADATA_TYPE_NAMES),
     *(f"tag:{name}" for name in CARD_METADATA_TAGS),
     *(f"num:{name}" for name in CARD_METADATA_NUMERIC_FEATURES),
+    "state:ability_active",
+    *(f"ability:{name}" for name in CARD_ABILITY_TAGS),
+    "num:ability_cost",
+    "state:evolved",
+    *(f"evo:{name}" for name in CARD_EVO_TAGS),
+    "num:evo_cycle",
 )
 CARD_METADATA_VECTOR_SIZE = len(CARD_METADATA_VECTOR_FIELDS)
+# Width of the trailing state block (ability + evo), appended after the base
+# card-id features. Used to build the all-zero base-state tail.
+_STATE_BLOCK_SIZE = 1 + len(CARD_ABILITY_TAGS) + 1 + 1 + len(CARD_EVO_TAGS) + 1
+_ZERO_STATE_BLOCK: tuple[float, ...] = tuple(0.0 for _ in range(_STATE_BLOCK_SIZE))
 
 UNKNOWN_CARD_METADATA: dict[str, Any] = {
     "name": "<unknown>",
@@ -174,10 +214,78 @@ CARD_METADATA: dict[int, dict[str, Any]] = {
     int(card_id): _normalise_metadata(raw)
     for card_id, raw in (CARD_METADATA_SNAPSHOT.get("cards") or {}).items()
 }
+
+
+def _parse_ability(raw: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not raw:
+        return None
+    tags = frozenset(str(t) for t in (raw.get("tags") or []) if str(t) in CARD_ABILITY_TAGS)
+    cost = max(0.0, min(1.0, float(raw.get("cost", 0) or 0) / MAX_ABILITY_ELIXIR))
+    return {"tags": tags, "cost": cost}
+
+
+def _parse_evo(raw: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not raw:
+        return None
+    tags = frozenset(str(t) for t in (raw.get("tags") or []) if str(t) in CARD_EVO_TAGS)
+    cycle = max(0.0, min(1.0, float(raw.get("cycle", 0) or 0) / MAX_EVO_CYCLE))
+    return {"tags": tags, "cycle": cycle}
+
+
+# Always-on champion ability (keyed by the champion's own card id) and the hero
+# button ability (keyed by the base card id, applied only in hero form).
+CARD_CHAMPION_ABILITY: dict[int, dict[str, Any]] = {}
+CARD_HERO_ABILITY: dict[int, dict[str, Any]] = {}
+CARD_EVO: dict[int, dict[str, Any]] = {}
+for _card_id, _raw in (CARD_METADATA_SNAPSHOT.get("cards") or {}).items():
+    _cid = int(_card_id)
+    if (champ := _parse_ability(_raw.get("champion_ability"))) is not None:
+        CARD_CHAMPION_ABILITY[_cid] = champ
+    if (hero := _parse_ability(_raw.get("hero_ability"))) is not None:
+        CARD_HERO_ABILITY[_cid] = hero
+    if (evo := _parse_evo(_raw.get("evo"))) is not None:
+        CARD_EVO[_cid] = evo
+
+
+def _ability_block(card_id: int, hero: bool) -> tuple[float, ...]:
+    """``ability_active`` + effect-tag one-hot + normalized cost (length 8)."""
+    ability = CARD_CHAMPION_ABILITY.get(card_id)
+    if ability is None and hero:
+        ability = CARD_HERO_ABILITY.get(card_id)
+    if ability is None:
+        return (0.0,) + tuple(0.0 for _ in CARD_ABILITY_TAGS) + (0.0,)
+    tags = ability["tags"]
+    return (
+        (1.0,)
+        + tuple(1.0 if t in tags else 0.0 for t in CARD_ABILITY_TAGS)
+        + (float(ability["cost"]),)
+    )
+
+
+def _evo_block(card_id: int, evolved: bool) -> tuple[float, ...]:
+    """``evolved`` flag + effect-tag one-hot + normalized cycle (length 8).
+
+    Any evolved card gets the ``evolved`` flag; curated cards add effect tags and
+    a real cycle, uncurated ones fall back to a neutral generic evo signal.
+    """
+    if not evolved or card_id not in CARD_METADATA:
+        return (0.0,) + tuple(0.0 for _ in CARD_EVO_TAGS) + (0.0,)
+    evo = CARD_EVO.get(card_id)
+    if evo is None:
+        return (1.0,) + tuple(0.0 for _ in CARD_EVO_TAGS) + (0.0,)
+    tags = evo["tags"]
+    return (
+        (1.0,)
+        + tuple(1.0 if t in tags else 0.0 for t in CARD_EVO_TAGS)
+        + (float(evo["cycle"]),)
+    )
+
+
 UNKNOWN_CARD_METADATA_VECTOR: tuple[float, ...] = (
     tuple(1.0 if name == "unknown" else 0.0 for name in CARD_METADATA_TYPE_NAMES)
     + tuple(0.0 for _ in CARD_METADATA_TAGS)
     + tuple(0.0 for _ in CARD_METADATA_NUMERIC_FEATURES)
+    + _ZERO_STATE_BLOCK
 )
 PADDING_CARD_METADATA_VECTOR: tuple[float, ...] = tuple(
     0.0 for _ in range(CARD_METADATA_VECTOR_SIZE)
@@ -193,11 +301,19 @@ def metadata_for(card_id: int) -> dict[str, Any]:
     return CARD_METADATA.get(int(card_id), UNKNOWN_CARD_METADATA)
 
 
-def metadata_vector_for(card_id: int) -> tuple[float, ...]:
-    """Stable float vector for a raw card id; id 0 is all-zero padding."""
-    if int(card_id) == 0:
+def metadata_vector_for(
+    card_id: int, evolved: bool = False, hero: bool = False
+) -> tuple[float, ...]:
+    """Stable float vector for a card in a given form; id 0 is all-zero padding.
+
+    ``evolved`` / ``hero`` select the card's form (from evolutionLevel /
+    heroLevel): the base card-id features are unchanged, and the trailing ability
+    and evolution blocks activate accordingly.
+    """
+    cid = int(card_id)
+    if cid == 0:
         return PADDING_CARD_METADATA_VECTOR
-    metadata = metadata_for(card_id)
+    metadata = metadata_for(cid)
     card_type = str(metadata["type"])
     tags = metadata["tags"]
     numeric = metadata["numeric"]
@@ -205,4 +321,6 @@ def metadata_vector_for(card_id: int) -> tuple[float, ...]:
         tuple(1.0 if name == card_type else 0.0 for name in CARD_METADATA_TYPE_NAMES)
         + tuple(1.0 if tag in tags else 0.0 for tag in CARD_METADATA_TAGS)
         + tuple(float(numeric[feature]) for feature in CARD_METADATA_NUMERIC_FEATURES)
+        + _ability_block(cid, hero)
+        + _evo_block(cid, evolved)
     )

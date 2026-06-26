@@ -1,6 +1,6 @@
 {
-  "schema_version": 2,
-  "generated_at": "2026-06-26T15:44:51+00:00",
+  "schema_version": 3,
+  "generated_at": "2026-06-26T20:47:51+00:00",
   "source": {
     "method": "hand-curated taxonomy (offline, no scraping)",
     "generator": "scripts/refresh_card_metadata.py::CARD_TABLE"
@@ -42,6 +42,22 @@
       "speed",
       "range"
     ],
+    "ability_tags": [
+      "ability_spawn",
+      "ability_damage",
+      "ability_dash",
+      "ability_buff",
+      "ability_control",
+      "ability_shield"
+    ],
+    "evo_tags": [
+      "evo_spawn",
+      "evo_damage",
+      "evo_shield",
+      "evo_charge",
+      "evo_splash",
+      "evo_buff"
+    ],
     "grid_scales": {
       "hitpoints": 20,
       "damage": 20,
@@ -82,6 +98,19 @@
         "dps": 0.6,
         "speed": 0.5,
         "range": 0.2
+      },
+      "hero_ability": {
+        "cost": 2,
+        "tags": [
+          "ability_control"
+        ]
+      },
+      "evo": {
+        "cycle": 2,
+        "tags": [
+          "evo_charge",
+          "evo_shield"
+        ]
       }
     },
     "26000001": {
@@ -115,6 +144,12 @@
         "dps": 0.4,
         "speed": 0.5,
         "range": 0.8
+      },
+      "evo": {
+        "cycle": 2,
+        "tags": [
+          "evo_damage"
+        ]
       }
     },
     "26000002": {
@@ -147,6 +182,12 @@
         "dps": 0.8,
         "speed": 1.0,
         "range": 0.2
+      },
+      "hero_ability": {
+        "cost": 2,
+        "tags": [
+          "ability_spawn"
+        ]
       }
     },
     "26000003": {
@@ -180,6 +221,12 @@
         "dps": 0.4,
         "speed": 0.25,
         "range": 0.2
+      },
+      "hero_ability": {
+        "cost": 3,
+        "tags": [
+          "ability_control"
+        ]
       }
     },
     "26000004": {
@@ -213,6 +260,12 @@
         "dps": 0.8,
         "speed": 0.5,
         "range": 0.2
+      },
+      "evo": {
+        "cycle": 2,
+        "tags": [
+          "evo_shield"
+        ]
       }
     },
     "26000005": {
@@ -281,6 +334,12 @@
         "dps": 0.8,
         "speed": 0.5,
         "range": 0.2
+      },
+      "hero_ability": {
+        "cost": 2,
+        "tags": [
+          "ability_spawn"
+        ]
       }
     },
     "26000007": {
@@ -348,6 +407,12 @@
         "dps": 0.8,
         "speed": 0.5,
         "range": 0.2
+      },
+      "evo": {
+        "cycle": 2,
+        "tags": [
+          "evo_buff"
+        ]
       }
     },
     "26000009": {
@@ -413,6 +478,13 @@
         "dps": 0.4,
         "speed": 0.75,
         "range": 0.2
+      },
+      "evo": {
+        "cycle": 3,
+        "tags": [
+          "evo_spawn",
+          "evo_buff"
+        ]
       }
     },
     "26000011": {
@@ -446,6 +518,13 @@
         "dps": 0.6,
         "speed": 0.5,
         "range": 0.2
+      },
+      "evo": {
+        "cycle": 2,
+        "tags": [
+          "evo_splash",
+          "evo_shield"
+        ]
       }
     },
     "26000012": {
@@ -511,6 +590,13 @@
         "dps": 0.6,
         "speed": 0.5,
         "range": 0.6
+      },
+      "evo": {
+        "cycle": 2,
+        "tags": [
+          "evo_splash",
+          "evo_damage"
+        ]
       }
     },
     "26000014": {
@@ -544,6 +630,12 @@
         "dps": 0.6,
         "speed": 0.5,
         "range": 0.8
+      },
+      "hero_ability": {
+        "cost": 3,
+        "tags": [
+          "ability_spawn"
+        ]
       }
     },
     "26000015": {
@@ -646,6 +738,19 @@
         "dps": 0.6,
         "speed": 0.5,
         "range": 0.6
+      },
+      "hero_ability": {
+        "cost": 1,
+        "tags": [
+          "ability_damage"
+        ]
+      },
+      "evo": {
+        "cycle": 2,
+        "tags": [
+          "evo_shield",
+          "evo_splash"
+        ]
       }
     },
     "26000018": {
@@ -679,6 +784,12 @@
         "dps": 0.8,
         "speed": 0.5,
         "range": 0.2
+      },
+      "hero_ability": {
+        "cost": 2,
+        "tags": [
+          "ability_buff"
+        ]
       }
     },
     "26000019": {
@@ -880,6 +991,12 @@
         "dps": 0.6,
         "speed": 0.25,
         "range": 0.6
+      },
+      "evo": {
+        "cycle": 2,
+        "tags": [
+          "evo_damage"
+        ]
       }
     },
     "26000025": {
@@ -980,6 +1097,13 @@
         "dps": 0.6,
         "speed": 0.5,
         "range": 0.2
+      },
+      "hero_ability": {
+        "cost": 3,
+        "tags": [
+          "ability_damage",
+          "ability_dash"
+        ]
       }
     },
     "26000028": {
@@ -1080,6 +1204,12 @@
         "dps": 0.2,
         "speed": 1.0,
         "range": 0.2
+      },
+      "evo": {
+        "cycle": 2,
+        "tags": [
+          "evo_splash"
+        ]
       }
     },
     "26000031": {
@@ -1213,6 +1343,12 @@
         "dps": 0.6,
         "speed": 0.5,
         "range": 0.6
+      },
+      "hero_ability": {
+        "cost": 2,
+        "tags": [
+          "ability_damage"
+        ]
       }
     },
     "26000035": {
@@ -1348,6 +1484,12 @@
         "dps": 0.2,
         "speed": 0.5,
         "range": 0.2
+      },
+      "hero_ability": {
+        "cost": 2,
+        "tags": [
+          "ability_control"
+        ]
       }
     },
     "26000039": {
@@ -1382,6 +1524,13 @@
         "dps": 0.6,
         "speed": 0.5,
         "range": 0.4
+      },
+      "hero_ability": {
+        "cost": 2,
+        "tags": [
+          "ability_dash",
+          "ability_damage"
+        ]
       }
     },
     "26000040": {
@@ -1549,6 +1698,12 @@
         "dps": 0.6,
         "speed": 0.5,
         "range": 0.4
+      },
+      "evo": {
+        "cycle": 2,
+        "tags": [
+          "evo_damage"
+        ]
       }
     },
     "26000045": {
@@ -1648,6 +1803,13 @@
         "dps": 0.6,
         "speed": 0.5,
         "range": 0.2
+      },
+      "evo": {
+        "cycle": 3,
+        "tags": [
+          "evo_shield",
+          "evo_charge"
+        ]
       }
     },
     "26000048": {
@@ -1715,6 +1877,12 @@
         "dps": 0.6,
         "speed": 1.0,
         "range": 0.2
+      },
+      "evo": {
+        "cycle": 2,
+        "tags": [
+          "evo_buff"
+        ]
       }
     },
     "26000050": {
@@ -1748,6 +1916,12 @@
         "dps": 0.6,
         "speed": 0.75,
         "range": 0.2
+      },
+      "evo": {
+        "cycle": 2,
+        "tags": [
+          "evo_spawn"
+        ]
       }
     },
     "26000051": {
@@ -1915,6 +2089,13 @@
         "dps": 0.6,
         "speed": 0.5,
         "range": 0.2
+      },
+      "evo": {
+        "cycle": 2,
+        "tags": [
+          "evo_splash",
+          "evo_damage"
+        ]
       }
     },
     "26000056": {
@@ -2151,6 +2332,12 @@
         "dps": 0.6,
         "speed": 0.5,
         "range": 0.9
+      },
+      "hero_ability": {
+        "cost": 1,
+        "tags": [
+          "ability_damage"
+        ]
       }
     },
     "26000063": {
@@ -2221,6 +2408,13 @@
         "dps": 0.6,
         "speed": 0.75,
         "range": 0.95
+      },
+      "evo": {
+        "cycle": 2,
+        "tags": [
+          "evo_splash",
+          "evo_damage"
+        ]
       }
     },
     "26000065": {
@@ -2255,6 +2449,13 @@
         "dps": 0.8,
         "speed": 0.75,
         "range": 0.2
+      },
+      "champion_ability": {
+        "cost": 1,
+        "tags": [
+          "ability_damage",
+          "ability_dash"
+        ]
       }
     },
     "26000066": {
@@ -2390,6 +2591,12 @@
         "dps": 0.6,
         "speed": 0.5,
         "range": 0.2
+      },
+      "champion_ability": {
+        "cost": 2,
+        "tags": [
+          "ability_spawn"
+        ]
       }
     },
     "26000070": {
@@ -2492,6 +2699,13 @@
         "dps": 0.8,
         "speed": 0.5,
         "range": 0.8
+      },
+      "champion_ability": {
+        "cost": 1,
+        "tags": [
+          "ability_shield",
+          "ability_buff"
+        ]
       }
     },
     "26000073": {
@@ -2559,6 +2773,12 @@
         "dps": 0.8,
         "speed": 0.75,
         "range": 0.2
+      },
+      "champion_ability": {
+        "cost": 1,
+        "tags": [
+          "ability_dash"
+        ]
       }
     },
     "26000075": {
@@ -2628,6 +2848,13 @@
         "dps": 0.6,
         "speed": 0.5,
         "range": 0.2
+      },
+      "champion_ability": {
+        "cost": 1,
+        "tags": [
+          "ability_shield",
+          "ability_control"
+        ]
       }
     },
     "26000078": {
@@ -2730,6 +2957,13 @@
         "dps": 0.8,
         "speed": 0.75,
         "range": 0.2
+      },
+      "champion_ability": {
+        "cost": 2,
+        "tags": [
+          "ability_damage",
+          "ability_dash"
+        ]
       }
     },
     "26000082": {
@@ -2967,6 +3201,12 @@
         "dps": 0.6,
         "speed": 0.5,
         "range": 0.8
+      },
+      "champion_ability": {
+        "cost": 3,
+        "tags": [
+          "ability_spawn"
+        ]
       }
     },
     "26000095": {
@@ -3103,6 +3343,12 @@
         "dps": 0.6,
         "speed": 0.5,
         "range": 0.2
+      },
+      "champion_ability": {
+        "cost": 2,
+        "tags": [
+          "ability_damage"
+        ]
       }
     },
     "26000101": {
@@ -3203,6 +3449,12 @@
         "dps": 0.9,
         "speed": 1.0,
         "range": 0.2
+      },
+      "champion_ability": {
+        "cost": 1,
+        "tags": [
+          "ability_dash"
+        ]
       }
     },
     "27000000": {
@@ -3302,6 +3554,13 @@
         "dps": 0.4,
         "speed": 0.0,
         "range": 1.0
+      },
+      "evo": {
+        "cycle": 3,
+        "tags": [
+          "evo_damage",
+          "evo_splash"
+        ]
       }
     },
     "27000003": {
@@ -3532,6 +3791,12 @@
         "dps": 0.0,
         "speed": 0.0,
         "range": 0.0
+      },
+      "hero_ability": {
+        "cost": 6,
+        "tags": [
+          "ability_spawn"
+        ]
       }
     },
     "27000010": {
@@ -3970,6 +4235,13 @@
         "dps": 0.0,
         "speed": 0.0,
         "range": 0.6
+      },
+      "evo": {
+        "cycle": 2,
+        "tags": [
+          "evo_splash",
+          "evo_damage"
+        ]
       }
     },
     "28000009": {
@@ -4207,6 +4479,12 @@
         "dps": 0.0,
         "speed": 0.0,
         "range": 0.6
+      },
+      "hero_ability": {
+        "cost": 2,
+        "tags": [
+          "ability_damage"
+        ]
       }
     },
     "28000016": {
