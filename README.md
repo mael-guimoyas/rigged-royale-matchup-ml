@@ -284,6 +284,30 @@ doit aller vers la couverture ou les données plutôt que l'architecture.
 `brier_headroom_captured_vs_prior` indique la part de la marge prior→plancher que le modèle
 capture.
 
+### 4e. Plafond théorique : faiblesses et améliorations
+
+Cette commande estime le **plafond théorique** du modèle et liste, par priorité,
+ses faiblesses et les améliorations concrètes pour s'en approcher. C'est l'étape
+qui transforme le plancher de bruit en plan d'action.
+
+```powershell
+rigged-matchup ceiling artifacts/matchup-model.pt --split test --min-support 100
+```
+
+Le plafond combine deux bornes estimées sur les matchups supportés :
+
+- le **Brier irréductible** `p*(1-p)` (plus bas Brier atteignable) ;
+- l'**AUC oracle** : l'AUC obtenue en prédisant le vrai taux `p` de chaque matchup
+  (plafond de discrimination).
+
+Le rapport `artifacts/ceiling-test-report.json` indique la part de ce plafond déjà
+captée (`auc_capture_vs_oracle`, `brier_capture_vs_prior`), puis classe les
+faiblesses par sévérité sur quatre axes — discrimination, calibration, couverture,
+et écart au plancher par segment — chacune reliée à un levier réel du repo
+(capacité du modèle, `attach-prior`, `label_smoothing`, `collect-api --balance`,
+calibration par segment). Une sortie lisible s'affiche dans le terminal ;
+`--json-only` renvoie le rapport brut. Sur RunPod : `bash scripts/runpod_ceiling.sh`.
+
 ### 4b. Évaluation stricte des matchups jamais vus
 
 Ce test garde uniquement les combats du split choisi dont le matchup exact est absent de

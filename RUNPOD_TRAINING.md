@@ -97,6 +97,64 @@ If GPU usage is low and CPU/RAM are comfortable, try:
 RUNPOD_BATCH_SIZE=8192 RUNPOD_EVAL_BATCH_SIZE=16384 RUNPOD_NUM_WORKERS=8 bash scripts/runpod_train.sh
 ```
 
+## Unseen-matchup evaluation (generalisation)
+
+After training, measure how the model does on matchups whose unordered deck
+pair never appears in train — the honest test of generalisation rather than
+memorisation. It reuses the trained checkpoint, prepared data, venv and config
+from `runpod_train.sh`:
+
+```bash
+bash scripts/runpod_unseen.sh
+```
+
+Tunables (env vars, same convention as the training script):
+
+```bash
+UNSEEN_SPLIT=test           # or validation
+UNSEEN_QUICK=0              # 1 = only the overall all_unseen_matchups level (faster/cheaper)
+CHECKPOINT=/workspace/artifacts/matchup-model.pt
+```
+
+It prints the JSON result and writes `artifacts/unseen-<split>.json`. The full
+run reports four levels: `all_unseen_matchups` (overall) plus the stratified
+`known_decks_new_matchup` (easy), `one_new_deck` (medium) and `two_new_decks`
+(hard). Set `UNSEEN_QUICK=1` for only the headline overall metric — much faster
+when you do not need the stratified breakdown. You can also call it directly:
+
+```bash
+rigged-matchup evaluate-unseen artifacts/matchup-model.pt --split test
+rigged-matchup evaluate-unseen artifacts/matchup-model.pt --split test --quick
+```
+
+## Ceiling analysis (faiblesses + ameliorations)
+
+After training, estimate the model's **theoretical ceiling** and get a ranked
+list of weaknesses and concrete improvements to close the gap. It reuses the
+trained checkpoint, prepared data, venv and config from `runpod_train.sh`:
+
+```bash
+bash scripts/runpod_ceiling.sh
+```
+
+Tunables (env vars, same convention as the training script):
+
+```bash
+CEILING_SPLIT=test          # or validation
+CEILING_MIN_SUPPORT=100     # min games per matchup to estimate the ceiling
+CHECKPOINT=/workspace/artifacts/matchup-model.pt
+```
+
+It prints a terminal summary and writes `artifacts/ceiling-<split>-report.json`.
+The ceiling is the irreducible Brier `p*(1-p)` plus the AUC of an oracle that
+predicts the true per-matchup rate; the report shows how much of that the model
+captures, then where it loses ground (discrimination, calibration, coverage,
+per-segment) with prioritised fixes. You can also call it directly:
+
+```bash
+rigged-matchup ceiling artifacts/matchup-model.pt --split test --min-support 100
+```
+
 ## After training
 
 Artifacts are written to:

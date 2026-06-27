@@ -7,6 +7,7 @@ import typer
 
 from .api_collect import collect_from_api, download_from_storage, upload_to_storage
 from .benchmark import benchmark_model
+from .ceiling import analyze_ceiling, format_ceiling_report
 from .card2vec import pretrain_card_embeddings
 from .config import load_config
 from .diagnostics import diagnose_ranked_segments
@@ -378,6 +379,36 @@ def benchmark(
         load_config(config), checkpoint, split=split, min_support=min_support
     )
     typer.echo(json.dumps(result, indent=2))
+
+
+@app.command()
+def ceiling(
+    checkpoint: Path,
+    config: Path = DEFAULT_CONFIG,
+    split: str = typer.Option(
+        "test",
+        help="Prepared split to analyse. Usually 'test' or 'validation'.",
+    ),
+    min_support: int = typer.Option(
+        100,
+        help="Minimum games per matchup used to estimate the theoretical ceiling.",
+    ),
+    json_only: bool = typer.Option(
+        False,
+        "--json-only",
+        help="Print the raw JSON report instead of the human-readable summary.",
+    ),
+) -> None:
+    """Estimate the theoretical ceiling and list weaknesses + improvements to reach it."""
+    if split not in {"validation", "test"}:
+        raise typer.BadParameter("split must be 'validation' or 'test'")
+    report = analyze_ceiling(
+        load_config(config), checkpoint, split=split, min_support=min_support
+    )
+    if json_only:
+        typer.echo(json.dumps(report, indent=2))
+    else:
+        typer.echo(format_ceiling_report(report))
 
 
 @app.command()
