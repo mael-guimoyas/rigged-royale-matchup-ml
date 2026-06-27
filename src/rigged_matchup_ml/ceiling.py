@@ -37,8 +37,9 @@ import numpy as np
 import pyarrow.dataset as pads
 import torch
 
-from .benchmark import BENCHMARK_COLUMNS, _calibrated_probabilities, _device
+from .benchmark import BENCHMARK_COLUMNS, _calibrated_probabilities_batch, _device
 from .config import AppConfig
+from .dataset import _EncodeContext
 from .metrics import _scalar_metrics, binary_metrics
 from .model import SymmetricMatchupModel
 from .unseen_evaluation import matchup_key
@@ -127,41 +128,46 @@ def analyze_ceiling(
     key_to_id: dict[str, int] = {}
     segment_to_id: dict[str, int] = {}
 
+    # Encoding is done with the vectorised training hot-path (whole-column numpy)
+    # instead of a Python loop per row, so a fast GPU is actually fed rather than
+    # starved. Scan in large blocks; the model still runs in sub_batch_size chunks.
+    context = _EncodeContext(payload["vocabulary"])
+    scan_batch_size = max(int(batch_size), 65_536)
     dataset = pads.dataset(split_dir, format="parquet")
-    scanner = dataset.scanner(columns=BENCHMARK_COLUMNS, batch_size=batch_size)
+    scanner = dataset.scanner(columns=BENCHMARK_COLUMNS, batch_size=scan_batch_size)
     for record_batch in scanner.to_batches():
-        rows = record_batch.to_pylist()
-        if not rows:
+        count = record_batch.num_rows
+        if count == 0:
             continue
-        model_chunks.append(
-            _calibrated_probabilities(model, rows, payload, device).astype(np.float32)
+        probabilities, decoded, segments = _calibrated_probabilities_batch(
+            model, record_batch, payload, device, context, sub_batch_size=int(batch_size)
         )
-        prior_chunks.append(
-            np.fromiter((float(row["matrix_prior"]) for row in rows), dtype=np.float32, count=len(rows))
-        )
-        target_chunks.append(
-            np.fromiter((int(bool(row["win"])) for row in rows), dtype=np.int8, count=len(rows))
-        )
+        model_chunks.append(probabilities.astype(np.float32))
+        prior_chunks.append(decoded["matrix_prior"].astype(np.float32))
+        target_chunks.append(decoded["win"].astype(np.int8))
+        # Grouping still needs the raw deck keys; one column to_pylist each is cheap
+        # next to the (now vectorised) encoding. The matchup key carries the segment
+        # so the oracle conditions on the same meta context the model sees.
+        team_keys = record_batch.column("team_deck_key").to_pylist()
+        opponent_keys = record_batch.column("opponent_deck_key").to_pylist()
         key_id_chunks.append(
             np.fromiter(
                 (
                     key_to_id.setdefault(
-                        matchup_key(row["team_deck_key"], row["opponent_deck_key"])
-                        + "@@"
-                        + str(row["segment"]),
+                        matchup_key(team, opponent) + "@@" + str(segment),
                         len(key_to_id),
                     )
-                    for row in rows
+                    for team, opponent, segment in zip(team_keys, opponent_keys, segments)
                 ),
                 dtype=np.int32,
-                count=len(rows),
+                count=count,
             )
         )
         segment_id_chunks.append(
             np.fromiter(
-                (segment_to_id.setdefault(str(row["segment"]), len(segment_to_id)) for row in rows),
+                (segment_to_id.setdefault(str(segment), len(segment_to_id)) for segment in segments),
                 dtype=np.int32,
-                count=len(rows),
+                count=count,
             )
         )
 

@@ -10,7 +10,13 @@ import torch
 from torch.utils.data import default_collate
 
 from .config import AppConfig
-from .dataset import FEATURE_COLUMNS, encode_row
+from .dataset import (
+    FEATURE_COLUMNS,
+    _assemble_batch,
+    _decode_batch,
+    _EncodeContext,
+    encode_row,
+)
 from .metrics import _scalar_metrics, binary_metrics, bootstrap_intervals
 from .model import SymmetricMatchupModel
 from .unseen_evaluation import matchup_key
@@ -129,6 +135,80 @@ def _calibrated_probabilities(
     )
     batch_biases = torch.tensor(biases, dtype=torch.float32, device=device)
     return torch.sigmoid(logits / batch_temperatures + batch_biases).cpu().numpy()
+
+
+def _temperature_bias_vectors(
+    segments: list[str], payload: dict[str, Any]
+) -> tuple[np.ndarray, np.ndarray]:
+    """Per-row temperature/bias arrays, identical mapping to _calibrated_probabilities.
+
+    Mapped per *unique* segment string (a handful of segments) then expanded, so it
+    stays vectorised instead of doing a dict lookup per row.
+    """
+    temperature = float(payload["temperature"])
+    segment_temperatures = payload.get("segment_temperatures") or {}
+    calibration = payload.get("calibration") or {}
+    global_calibration = calibration.get("global", {})
+    global_temperature = float(global_calibration.get("temperature", temperature))
+    global_bias = float(global_calibration.get("bias", 0.0))
+    segment_calibrations = calibration.get("segments") or {}
+
+    resolved: dict[str, tuple[float, float]] = {}
+    for segment in set(segments):
+        if segment_calibrations:
+            segment_calibration = segment_calibrations.get(segment, {})
+            resolved[segment] = (
+                float(segment_calibration.get("temperature", global_temperature)),
+                float(segment_calibration.get("bias", global_bias)),
+            )
+        else:
+            resolved[segment] = (float(segment_temperatures.get(segment, temperature)), 0.0)
+    count = len(segments)
+    temperatures = np.fromiter((resolved[s][0] for s in segments), dtype=np.float32, count=count)
+    biases = np.fromiter((resolved[s][1] for s in segments), dtype=np.float32, count=count)
+    return temperatures, biases
+
+
+@torch.no_grad()
+def _calibrated_probabilities_batch(
+    model: SymmetricMatchupModel,
+    record_batch,
+    payload: dict[str, Any],
+    device: torch.device,
+    context: _EncodeContext,
+    sub_batch_size: int = 16_384,
+) -> tuple[np.ndarray, dict[str, np.ndarray], list[str]]:
+    """Vectorised calibrated probabilities for a whole pyarrow RecordBatch.
+
+    Replaces the per-row ``encode_row`` + ``default_collate`` path (single-thread
+    Python, GPU-starving) with the training hot-path numpy encoders so the GPU is
+    actually fed. Returns the probabilities, the decoded arrays (``win`` and
+    ``matrix_prior`` are reused by the caller, so they need not be re-read) and the
+    per-row segment strings. No swap augmentation is applied, so ``decoded['win']``
+    is the row's true target.
+    """
+    decoded = _decode_batch(record_batch, context)
+    count = int(decoded["win"].shape[0])
+    segments = record_batch.column("segment").to_pylist()
+    if count == 0:
+        return np.empty(0, dtype=np.float32), decoded, segments
+    no_swap = np.zeros(count, dtype=bool)
+    assembled = _assemble_batch(decoded, no_swap, 0, count)
+    temperatures, biases = _temperature_bias_vectors(segments, payload)
+
+    probabilities = np.empty(count, dtype=np.float32)
+    for start in range(0, count, sub_batch_size):
+        stop = min(start + sub_batch_size, count)
+        sub_batch = {key: value[start:stop].to(device) for key, value in assembled.items()}
+        logits = model(sub_batch)
+        temperature = (
+            torch.from_numpy(temperatures[start:stop]).to(device).clamp_min(1e-4)
+        )
+        bias = torch.from_numpy(biases[start:stop]).to(device)
+        probabilities[start:stop] = (
+            torch.sigmoid(logits / temperature + bias).cpu().numpy().astype(np.float32)
+        )
+    return probabilities, decoded, segments
 
 
 @torch.no_grad()
