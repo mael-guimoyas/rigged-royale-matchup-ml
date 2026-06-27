@@ -1,7 +1,9 @@
+import pytest
 import torch
 
 from rigged_matchup_ml.card_stats import CARD_METADATA_VECTOR_SIZE
 from rigged_matchup_ml.model import SymmetricMatchupModel
+from rigged_matchup_ml.predictor import _ablation_contributions
 
 
 def batch() -> dict[str, torch.Tensor]:
@@ -168,6 +170,149 @@ def test_explain_pairs_survive_multihead_cross() -> None:
     model.eval()
     maps = model.explain(batch())
     assert maps["cross_team_to_opponent"].shape == (1, 8, 8)
+
+
+def test_explain_uses_same_card_importance_as_forward() -> None:
+    model = SymmetricMatchupModel(
+        32,
+        4,
+        3,
+        3,
+        dropout=0.0,
+        use_cross_card_interactions=True,
+        use_card_importance=True,
+    )
+    model.eval()
+    b = batch()
+    b["team_card_metadata"][0, 0, 0] = 1.0
+    assert model.deck_encoder.card_importance_head is not None
+    with torch.no_grad():
+        model.deck_encoder.card_importance_head.weight.zero_()
+        model.deck_encoder.card_importance_head.weight[0, 0] = 3.0
+
+    maps = model.explain(b)
+    _, team_cards, team_mask, _ = model.deck_encoder.encode(
+        b["team_cards"],
+        b["team_evos"],
+        b["team_heroes"],
+        b["team_roles"],
+        b["team_tower"],
+        b["team_elixir"],
+        b["team_card_metadata"],
+        b["team_card_present"],
+    )
+    _, opponent_cards, opponent_mask, _ = model.deck_encoder.encode(
+        b["opponent_cards"],
+        b["opponent_evos"],
+        b["opponent_heroes"],
+        b["opponent_roles"],
+        b["opponent_tower"],
+        b["opponent_elixir"],
+        b["opponent_card_metadata"],
+        b["opponent_card_present"],
+    )
+    importance = model.deck_encoder.card_importance(
+        b["team_card_metadata"],
+        b["team_card_present"],
+        b["team_evos"],
+        b["team_heroes"],
+    )
+    assert model.card_interactions is not None
+    _, expected = model.card_interactions.cross(
+        team_cards,
+        team_mask,
+        opponent_cards,
+        opponent_mask,
+        return_weights=True,
+        first_weights=importance,
+    )
+    _, unweighted = model.card_interactions.cross(
+        team_cards,
+        team_mask,
+        opponent_cards,
+        opponent_mask,
+        return_weights=True,
+    )
+
+    assert torch.allclose(maps["cross_team_to_opponent"].flatten(1), expected)
+    assert not torch.allclose(expected, unweighted)
+
+
+def test_pair_keep_masks_remove_only_selected_attention_slots() -> None:
+    model = SymmetricMatchupModel(
+        32,
+        4,
+        3,
+        3,
+        dropout=0.0,
+        use_cross_card_interactions=True,
+        use_intra_deck_synergies=True,
+    )
+    model.eval()
+    b = batch()
+    _, team_cards, team_mask, _ = model.deck_encoder.encode(
+        b["team_cards"],
+        b["team_evos"],
+        b["team_heroes"],
+        b["team_roles"],
+        b["team_tower"],
+        b["team_elixir"],
+        b["team_card_metadata"],
+        b["team_card_present"],
+    )
+    _, opponent_cards, opponent_mask, _ = model.deck_encoder.encode(
+        b["opponent_cards"],
+        b["opponent_evos"],
+        b["opponent_heroes"],
+        b["opponent_roles"],
+        b["opponent_tower"],
+        b["opponent_elixir"],
+        b["opponent_card_metadata"],
+        b["opponent_card_present"],
+    )
+    assert model.card_interactions is not None
+    keep = torch.ones((1, 64), dtype=torch.bool)
+    keep[0, 7] = False
+    _, weights = model.card_interactions.cross(
+        team_cards,
+        team_mask,
+        opponent_cards,
+        opponent_mask,
+        return_weights=True,
+        pair_keep_mask=keep,
+    )
+
+    assert weights[0, 7] == 0
+    assert weights.sum().item() == pytest.approx(1.0)
+
+
+def test_signed_ablation_matches_masked_forward_delta() -> None:
+    model = SymmetricMatchupModel(
+        32,
+        4,
+        3,
+        3,
+        dropout=0.0,
+        use_cross_card_interactions=True,
+    )
+    model.eval()
+    b = batch()
+    with torch.no_grad():
+        baseline = model(b).item()
+    contributions = _ablation_contributions(
+        model,
+        b,
+        baseline,
+        "team_cross_pair_keep",
+        64,
+        [7],
+    )
+    keep = torch.ones((1, 64), dtype=torch.bool)
+    keep[0, 7] = False
+    with torch.no_grad():
+        masked = model({**b, "team_cross_pair_keep": keep}).item()
+
+    assert contributions[7] == pytest.approx(baseline - masked)
 
 
 def test_probability_is_antisymmetric_with_learnable_prior() -> None:

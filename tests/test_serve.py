@@ -242,10 +242,17 @@ def test_predict_includes_model_interactions_when_requested(client) -> None:
         assert hit["source_card_id"] in team
         assert hit["target_card_id"] in opponent
         assert 0.0 <= hit["weight"] <= 1.0
+        assert isinstance(hit["contribution"], float)
     for hit in interactions["threats"]:
         assert hit["source_card_id"] in opponent
         assert hit["target_card_id"] in team
         assert 0.0 <= hit["weight"] <= 1.0
+        assert isinstance(hit["contribution"], float)
+
+    # Every target-side win condition keeps an explanation slot even when raw
+    # attention would otherwise fill the top-k with support cards.
+    assert any(hit["target_card_id"] == 28000004 for hit in interactions["answers"])
+    assert any(hit["target_card_id"] == 26000021 for hit in interactions["threats"])
 
     # Synergies are unordered pairs inside the player's own deck.
     assert len(body["synergies"]) >= 1
@@ -253,9 +260,10 @@ def test_predict_includes_model_interactions_when_requested(client) -> None:
         assert hit["source_card_id"] in team
         assert hit["target_card_id"] in team
         assert hit["source_card_id"] != hit["target_card_id"]
+        assert hit["contribution"] > 0
 
-    # Strongest pair is peak-normalised to 1.0.
-    assert max(hit["weight"] for hit in interactions["answers"]) == pytest.approx(1.0)
+    # Attention stays a bounded secondary signal; signed ablation drives selection.
+    assert max(hit["weight"] for hit in interactions["answers"]) <= 1.0
 
 
 def test_real_checkpoint_loads_if_compatible() -> None:

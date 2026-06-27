@@ -339,6 +339,7 @@ class CardInteractionEncoder(nn.Module):
         second_mask: torch.Tensor,
         return_weights: bool = False,
         first_weights: torch.Tensor | None = None,
+        pair_keep_mask: torch.Tensor | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         # Flattened pair index is first * 8 + second, i.e. [source, target] when the
         # weights are viewed as (batch, 8, 8): row = first/source deck position,
@@ -364,6 +365,13 @@ class CardInteractionEncoder(nn.Module):
             assert self.cross_head_combine is not None
             pair_features = self.cross_head_combine(per_head)
         pair_mask = (first_mask[:, :, None] & second_mask[:, None, :]).flatten(1, 2)
+        if pair_keep_mask is not None:
+            if pair_keep_mask.shape != pair_mask.shape:
+                raise ValueError(
+                    "Cross-pair mask shape mismatch: "
+                    f"got {tuple(pair_keep_mask.shape)}, expected {tuple(pair_mask.shape)}"
+                )
+            pair_mask = pair_mask & pair_keep_mask.bool()
         if first_weights is not None:
             # Weight each [source, target] pair by the source (first) card's
             # importance: a counter to my win condition matters more than a
@@ -381,11 +389,19 @@ class CardInteractionEncoder(nn.Module):
         cards: torch.Tensor,
         mask: torch.Tensor,
         return_weights: bool = False,
+        pair_keep_mask: torch.Tensor | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         first = cards[:, self.pair_first_indices, :]
         second = cards[:, self.pair_second_indices, :]
         pair_features = first * second
         pair_mask = mask[:, self.pair_first_indices] & mask[:, self.pair_second_indices]
+        if pair_keep_mask is not None:
+            if pair_keep_mask.shape != pair_mask.shape:
+                raise ValueError(
+                    "Synergy-pair mask shape mismatch: "
+                    f"got {tuple(pair_keep_mask.shape)}, expected {tuple(pair_mask.shape)}"
+                )
+            pair_mask = pair_mask & pair_keep_mask.bool()
         return self.deck_pairs(pair_features, pair_mask, return_weights=return_weights)
 
 
@@ -704,8 +720,16 @@ class SymmetricMatchupModel(nn.Module):
         if self.use_intra_deck_synergies:
             if self.card_interactions is None:
                 raise ValueError("Intra-deck synergies are enabled but not initialized")
-            team_synergy = self.card_interactions.within(team_cards, team_mask)
-            opponent_synergy = self.card_interactions.within(opponent_cards, opponent_mask)
+            team_synergy = self.card_interactions.within(
+                team_cards,
+                team_mask,
+                pair_keep_mask=batch.get("team_synergy_pair_keep"),
+            )
+            opponent_synergy = self.card_interactions.within(
+                opponent_cards,
+                opponent_mask,
+                pair_keep_mask=batch.get("opponent_synergy_pair_keep"),
+            )
         team_to_opponent = opponent_to_team = None
         if self.use_cross_card_interactions:
             if self.card_interactions is None:
@@ -719,10 +743,12 @@ class SymmetricMatchupModel(nn.Module):
             team_to_opponent = self.card_interactions.cross(
                 team_cards, team_mask, opponent_cards, opponent_mask,
                 first_weights=team_weights,
+                pair_keep_mask=batch.get("team_cross_pair_keep"),
             )
             opponent_to_team = self.card_interactions.cross(
                 opponent_cards, opponent_mask, team_cards, team_mask,
                 first_weights=opponent_weights,
+                pair_keep_mask=batch.get("opponent_cross_pair_keep"),
             )
         team_matchup_summary = opponent_matchup_summary = None
         if self.use_matchup_transformer:
@@ -770,13 +796,14 @@ class SymmetricMatchupModel(nn.Module):
     def explain(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """Model-native per-card-pair attributions for a matchup.
 
-        Returns the learned interaction salience, never a hardcoded table:
+        Returns the learned interaction salience used by the prediction path:
 
         - ``cross_team_to_opponent`` / ``cross_opponent_to_team``: ``(B, 8, 8)``
           softmax attention over the 64 card-vs-card pairs, indexed
           ``[source_position, target_position]``. The team→opponent term feeds the
-          team's orientation score (its advantage channel) and vice versa, so it
-          maps to "your card answers theirs" / "their card threatens yours".
+          team's orientation score (its advantage channel) and vice versa. These
+          are candidate matchup drivers, not proof of a physical counter; callers
+          must validate direction with signed ablation.
         - ``team_synergy`` / ``opponent_synergy``: ``(B, 28)`` attention over the
           unordered intra-deck pairs, aligned with ``synergy_pairs`` ``(2, 28)``.
 
@@ -785,6 +812,12 @@ class SymmetricMatchupModel(nn.Module):
         self.eval()
         if self.card_interactions is None:
             return {}
+        team_present = batch.get("team_card_present", batch["team_cards"].ne(0))
+        opponent_present = batch.get(
+            "opponent_card_present", batch["opponent_cards"].ne(0)
+        )
+        team_metadata = batch.get("team_card_metadata")
+        opponent_metadata = batch.get("opponent_card_metadata")
         _, team_cards, team_mask, _ = self.deck_encoder.encode(
             batch["team_cards"],
             batch["team_evos"],
@@ -792,8 +825,8 @@ class SymmetricMatchupModel(nn.Module):
             batch["team_roles"],
             batch["team_tower"],
             batch["team_elixir"],
-            batch.get("team_card_metadata"),
-            batch.get("team_card_present"),
+            team_metadata,
+            team_present,
         )
         _, opponent_cards, opponent_mask, _ = self.deck_encoder.encode(
             batch["opponent_cards"],
@@ -802,16 +835,35 @@ class SymmetricMatchupModel(nn.Module):
             batch["opponent_roles"],
             batch["opponent_tower"],
             batch["opponent_elixir"],
-            batch.get("opponent_card_metadata"),
-            batch.get("opponent_card_present"),
+            opponent_metadata,
+            opponent_present,
         )
         result: dict[str, torch.Tensor] = {}
         if self.use_cross_card_interactions:
+            team_weights = self.deck_encoder.card_importance(
+                team_metadata, team_present, batch["team_evos"], batch["team_heroes"]
+            )
+            opponent_weights = self.deck_encoder.card_importance(
+                opponent_metadata,
+                opponent_present,
+                batch["opponent_evos"],
+                batch["opponent_heroes"],
+            )
             _, team_to_opponent = self.card_interactions.cross(
-                team_cards, team_mask, opponent_cards, opponent_mask, return_weights=True
+                team_cards,
+                team_mask,
+                opponent_cards,
+                opponent_mask,
+                return_weights=True,
+                first_weights=team_weights,
             )
             _, opponent_to_team = self.card_interactions.cross(
-                opponent_cards, opponent_mask, team_cards, team_mask, return_weights=True
+                opponent_cards,
+                opponent_mask,
+                team_cards,
+                team_mask,
+                return_weights=True,
+                first_weights=opponent_weights,
             )
             result["cross_team_to_opponent"] = team_to_opponent.view(-1, 8, 8)
             result["cross_opponent_to_team"] = opponent_to_team.view(-1, 8, 8)

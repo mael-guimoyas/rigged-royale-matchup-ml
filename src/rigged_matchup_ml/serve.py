@@ -66,8 +66,8 @@ class MatchupRequest(BaseModel):
     opponent_hero_card_ids: list[int] = Field(default_factory=list)
     # Per-card counter / synergy attributions are only needed for the headline
     # matchup of each battle, not the expected-context or meta-panel requests, so
-    # the caller opts in to avoid the extra attention pass on the high-fan-out
-    # requests.
+    # the caller opts in to avoid the extra attribution/ablation passes on the
+    # high-fan-out requests.
     include_interactions: bool = False
 
     @field_validator("team_card_ids", "opponent_card_ids")
@@ -82,6 +82,9 @@ class CardInteraction(BaseModel):
     source_card_id: int
     target_card_id: int
     weight: float
+    # Signed raw-logit effect from leave-one-pair-out ablation. Positive favors
+    # the requested team; negative favors the opponent.
+    contribution: float | None = None
 
 
 class CardInteractions(BaseModel):
@@ -97,8 +100,8 @@ class PredictionResponse(BaseModel):
     model_name: str | None
     model_version: str | None
     explanation: dict
-    # Model-derived, never a hardcoded table; absent when the request did not opt
-    # in or the checkpoint has no interaction terms.
+    # Model-derived attention plus signed ablation; absent when the request did not
+    # opt in or the checkpoint has no interaction terms.
     card_interactions: CardInteractions | None = None
     synergies: list[CardInteraction] | None = None
 
