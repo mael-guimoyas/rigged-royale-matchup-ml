@@ -75,10 +75,18 @@ def build_unseen_matchup_splits(
     prepared_dir: Path,
     output_dir: Path,
     split: str = "test",
+    levels: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
-    """Create difficulty-based splits for matchups absent from prepared train."""
+    """Create difficulty-based splits for matchups absent from prepared train.
+
+    ``levels`` selects which difficulty levels to materialise (default: all).
+    Passing only ``all_unseen_matchups`` skips the 3 stratified sub-levels, which
+    means 1 Parquet copy + 1 inference pass instead of 4 -- much faster/cheaper
+    when only the headline unseen metric is needed.
+    """
     if split == "train":
         raise ValueError("Unseen-matchup evaluation must use validation or test, not train")
+    selected_levels = list(levels) if levels else DIFFICULTY_LEVELS
 
     train_dir = prepared_dir / "train"
     evaluation_dir = prepared_dir / split
@@ -97,7 +105,7 @@ def build_unseen_matchup_splits(
         connection.execute(
             f"""
             create or replace temp view train_rows as
-            select *, {key_sql} as matchup_key
+            select team_deck_key, opponent_deck_key, {key_sql} as matchup_key
             from read_parquet('{train_glob}')
             """
         )
@@ -159,7 +167,7 @@ def build_unseen_matchup_splits(
         manifest["levels"] = {}
 
         original_rows = int(manifest["original_rows"])
-        for level in DIFFICULTY_LEVELS:
+        for level in selected_levels:
             level_dir = output_dir / str(level["name"])
             level_dir.mkdir(parents=True, exist_ok=True)
             output_path = level_dir / "data.parquet"
@@ -261,11 +269,18 @@ def _evaluate_level(
     )
     bootstrap_samples = int(config.evaluation.get("bootstrap_samples", 0))
     bootstrap_seed = int(config.training.get("seed", 0))
+    # Same guard as evaluate_checkpoint: on million-row unseen levels the point
+    # estimate is already razor-sharp and 300x AUC resamples is the slow part that
+    # burns GPU-pod time for nothing. Skip the bootstrap above the threshold.
+    bootstrap_max_rows = int(config.evaluation.get("bootstrap_max_rows", 250_000))
+    overall_bootstrap = bootstrap_samples
+    if bootstrap_max_rows and len(targets) > bootstrap_max_rows:
+        overall_bootstrap = 0
     metrics = binary_metrics(
         targets,
         probabilities,
         int(config.evaluation["calibration_bins"]),
-        bootstrap_samples=bootstrap_samples,
+        bootstrap_samples=overall_bootstrap,
         bootstrap_seed=bootstrap_seed,
     )
     metrics["by_segment"] = binary_metrics_by_group(
@@ -273,6 +288,7 @@ def _evaluate_level(
         probabilities,
         segments,
         int(config.evaluation["calibration_bins"]),
+        bootstrap_max_rows=bootstrap_max_rows,
     )
     return metrics
 
@@ -282,11 +298,17 @@ def evaluate_unseen_matchups(
     config: AppConfig,
     checkpoint_path: Path,
     split: str = "test",
+    quick: bool = False,
 ) -> dict[str, Any]:
     prepared_dir = config.resolve(config.data["prepared_dir"])
     artifact_dir = config.resolve(config.training["artifact_dir"])
     strict_dir = artifact_dir / f"unseen-{split}-matchups"
-    split_manifest = build_unseen_matchup_splits(prepared_dir, strict_dir, split=split)
+    # quick: only the overall all_unseen_matchups level -> 1 copy + 1 inference
+    # pass instead of 4, for a fast headline-only run.
+    levels = [DIFFICULTY_LEVELS[0]] if quick else None
+    split_manifest = build_unseen_matchup_splits(
+        prepared_dir, strict_dir, split=split, levels=levels
+    )
 
     report: dict[str, Any] = {
         "split": split,

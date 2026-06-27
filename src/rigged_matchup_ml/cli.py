@@ -325,11 +325,17 @@ def evaluate_unseen(
         "test",
         help="Prepared split to filter against train. Usually 'test' or 'validation'.",
     ),
+    quick: bool = typer.Option(
+        False,
+        "--quick",
+        help="Only the overall all_unseen_matchups level (skip the 3 stratified "
+        "sub-levels): far faster/cheaper when you just want the headline metric.",
+    ),
 ) -> None:
     """Evaluate only matchups whose unordered deck pair is absent from train."""
     if split not in {"validation", "test"}:
         raise typer.BadParameter("split must be 'validation' or 'test'")
-    result = evaluate_unseen_matchups(load_config(config), checkpoint, split=split)
+    result = evaluate_unseen_matchups(load_config(config), checkpoint, split=split, quick=quick)
     typer.echo(json.dumps(result, indent=2))
 
 
