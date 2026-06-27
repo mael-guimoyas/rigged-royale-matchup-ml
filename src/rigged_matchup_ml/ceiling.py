@@ -1,13 +1,30 @@
 """Theoretical ceiling analysis: how close the model is to the best achievable.
 
-With binary win/loss labels and a true per-matchup win-rate ``p``, no model can
-do better than the irreducible Brier ``p*(1-p)`` (the noise floor) nor than the
-AUC obtained by predicting that true ``p`` (the discrimination ceiling). This
-module estimates both ceilings from the observed per-matchup rates, measures how
-much of the attainable signal the model already captures, then turns each gap
-(discrimination, calibration, coverage, per-segment) into a prioritised,
-actionable improvement list. It reuses the same calibrated inference and noise
-floor as ``benchmark`` so the numbers are directly comparable.
+With binary win/loss labels and a true win-rate ``p`` for a fully-specified
+situation, no model can do better than the irreducible Brier ``p*(1-p)`` (the
+noise floor) nor than the AUC obtained by predicting that true ``p`` (the
+discrimination ceiling). This module estimates both ceilings from the observed
+per-matchup rates, measures how much of the attainable signal the model already
+captures, then turns each gap (discrimination, calibration, coverage,
+per-segment) into a prioritised, actionable improvement list.
+
+Crucial subtlety on this dataset: a "matchup" must be keyed by *everything the
+model conditions on*, otherwise the oracle is not a real ceiling and the model
+can beat it (capture > 100%, negative gap). The model sees the exact deck pair
+**and the segment**, so the grouping key here is ``unordered_deck_pair @ segment``.
+Two consequences follow and both are handled honestly:
+
+  * Exact deck pairs almost never repeat (millions of unique pairs for millions
+    of rows), so very few groups reach ``min_support``. When coverage is tiny
+    the per-matchup ceiling is simply not estimable and the report says so
+    (``reliable: false``) instead of printing confident garbage.
+  * If the model still beats the oracle on the supported groups
+    (``oracle_violated``) the key is too coarse / the rate is non-stationary, so
+    the ceiling is again flagged unreliable.
+
+Whatever the verdict, the metrics that need no per-matchup support — calibration
+on every row and the model's Brier vs the empirical ``matrix_prior`` baseline —
+are always reported, because those carry the real signal on this data.
 """
 
 from __future__ import annotations
@@ -29,6 +46,13 @@ from .unseen_evaluation import matchup_key
 
 # A segment needs at least this many supported rows before we trust its gap.
 SEGMENT_MIN_ROWS = 500
+# Below this share of supported rows the per-matchup ceiling is not estimable.
+MIN_RELIABLE_COVERAGE = 0.05
+# At least this many supported matchups before the ceiling is trustworthy.
+MIN_RELIABLE_MATCHUPS = 50
+# A model beating the oracle by more than this means the key is too coarse /
+# the per-matchup rate is non-stationary, so the "ceiling" is not a ceiling.
+ORACLE_VIOLATION_EPS = 1e-3
 
 
 def _per_matchup_rates(
@@ -92,7 +116,9 @@ def analyze_ceiling(
 
     # Keys/segments are integer-encoded during the scan so we never hold millions
     # of long matchup-key strings in memory (the OOM trap on full splits). Each
-    # chunk stays a compact numpy array; only the unique sets live as dicts.
+    # chunk stays a compact numpy array; only the unique sets live as dicts. The
+    # matchup key includes the segment so the oracle conditions on the same meta
+    # context the model sees (otherwise the model beats the oracle on segment).
     model_chunks: list[np.ndarray] = []
     prior_chunks: list[np.ndarray] = []
     target_chunks: list[np.ndarray] = []
@@ -120,7 +146,9 @@ def analyze_ceiling(
             np.fromiter(
                 (
                     key_to_id.setdefault(
-                        matchup_key(row["team_deck_key"], row["opponent_deck_key"]),
+                        matchup_key(row["team_deck_key"], row["opponent_deck_key"])
+                        + "@@"
+                        + str(row["segment"]),
                         len(key_to_id),
                     )
                     for row in rows
@@ -146,81 +174,28 @@ def analyze_ceiling(
     for name, index in segment_to_id.items():
         segment_names[index] = name
     rows_total = int(target_array.shape[0])
-
-    row_rate, supported_row, supported_matchups, observed_matchups = _per_matchup_rates(
-        target_array, matchup_ids, len(key_to_id), min_support
-    )
     bins = int(config.evaluation["calibration_bins"])
+    constant_brier = 0.25  # Brier of the uninformed constant-0.5 predictor.
 
     report: dict[str, Any] = {
         "split": split,
         "rows": rows_total,
         "min_support": int(min_support),
+        "matchup_key": "unordered_deck_pair @ segment",
         "win_rate": float(target_array.mean()) if rows_total else 0.0,
     }
 
-    supported_rows = int(supported_row.sum())
-    if supported_rows == 0:
-        report["warning"] = (
-            "No matchup reached min_support; lower --min-support to estimate a ceiling."
-        )
-        report["weaknesses"] = [
-            {
-                "area": "coverage",
-                "severity": "high",
-                "summary": "Aucun matchup n'atteint le support minimum.",
-                "detail": "Impossible d'estimer le plafond: collecte plus de combats ou baisse --min-support.",
-            }
-        ]
-        report["recommendations"] = []
-        output = artifact_dir / f"ceiling-{split}-report.json"
-        output.write_text(json.dumps(report, indent=2), encoding="utf-8")
-        return report
-
-    sup_targets = target_array[supported_row]
-    sup_rate = row_rate[supported_row]
-    sup_model = model_array[supported_row]
-    sup_prior = prior_array[supported_row]
-    constant_brier = 0.25  # Brier of the uninformed constant-0.5 predictor.
-
-    irreducible_brier = float(np.mean(sup_rate * (1.0 - sup_rate)))
-    oracle = _scalar_metrics(sup_targets, sup_rate)
-    model_supported = _scalar_metrics(sup_targets, sup_model)
-    prior_supported = _scalar_metrics(sup_targets, sup_prior)
-
-    ceiling = {
-        "irreducible_brier": irreducible_brier,
-        "oracle_brier": _safe(oracle["brier_score"]),
-        "oracle_auc": _safe(oracle["auc"]),
-        "observed_matchups": observed_matchups,
-        "supported_matchups": supported_matchups,
-        "supported_rows": supported_rows,
-        "coverage": supported_rows / rows_total if rows_total else 0.0,
-    }
-    report["theoretical_ceiling"] = ceiling
-
-    # Calibration is measured on every row, discrimination on supported rows only.
+    # ----- Always-valid block: needs no per-matchup support -----------------
+    # Calibration and discrimination on every row, and the model's Brier vs the
+    # empirical matrix_prior baseline. These carry the real signal when exact
+    # matchups never repeat, so they are reported whatever the ceiling verdict.
     calibration = binary_metrics(target_array, model_array, bins)
-    model_auc = _safe(model_supported["auc"])
-    oracle_auc = ceiling["oracle_auc"]
-    model_brier = float(model_supported["brier_score"])
-    prior_brier = float(prior_supported["brier_score"])
-
-    auc_capture = (
-        _capture_fraction(model_auc, 0.5, oracle_auc)
-        if model_auc is not None and oracle_auc is not None
-        else None
-    )
-    model_block = {
-        "auc_supported": model_auc,
-        "brier_supported": model_brier,
-        "brier_all_rows": _safe(calibration["brier_score"]),
-        "gap_to_floor": model_brier - irreducible_brier,
-        "auc_capture_vs_oracle": auc_capture,
-        "brier_capture_vs_prior": _capture_fraction(model_brier, prior_brier, irreducible_brier),
-        "brier_capture_vs_constant": _capture_fraction(
-            model_brier, constant_brier, irreducible_brier
-        ),
+    prior_brier_all = float(_scalar_metrics(target_array, prior_array)["brier_score"])
+    model_brier_all = float(calibration["brier_score"])
+    model_auc_all = _safe(calibration["auc"])
+    report["model_overall"] = {
+        "auc_all_rows": model_auc_all,
+        "brier_all_rows": model_brier_all,
         "calibration_slope": _safe(calibration["calibration_slope"]),
         "calibration_intercept": _safe(calibration["calibration_intercept"]),
         "expected_calibration_error_quantile": _safe(
@@ -228,50 +203,137 @@ def analyze_ceiling(
         ),
         "mean_prediction": _safe(calibration["mean_prediction"]),
     }
-    report["model"] = model_block
     report["baselines"] = {
-        "matrix_prior_brier_supported": prior_brier,
+        "matrix_prior_brier_all_rows": prior_brier_all,
         "constant_0.5_brier": constant_brier,
     }
+    report["beats_matrix_prior"] = bool(model_brier_all < prior_brier_all)
 
-    # Per-segment gap to the (segment-local) floor, worst first.
-    global_gap = model_block["gap_to_floor"]
-    by_segment: dict[str, dict[str, Any]] = {}
-    for segment_id, segment in enumerate(segment_names):
-        seg_mask = (segment_ids == segment_id) & supported_row
-        seg_rows = int(seg_mask.sum())
-        if seg_rows < SEGMENT_MIN_ROWS:
-            continue
-        seg_rate = row_rate[seg_mask]
-        seg_targets = target_array[seg_mask]
-        seg_model = model_array[seg_mask]
-        seg_irreducible = float(np.mean(seg_rate * (1.0 - seg_rate)))
-        seg_brier = float(_scalar_metrics(seg_targets, seg_model)["brier_score"])
-        seg_gap = seg_brier - seg_irreducible
-        by_segment[segment] = {
-            "supported_rows": seg_rows,
-            "win_rate": float(seg_targets.mean()),
-            "irreducible_brier": seg_irreducible,
-            "model_brier": seg_brier,
-            "gap_to_floor": seg_gap,
-            "gap_ratio_vs_global": (seg_gap / global_gap) if global_gap > 1e-9 else None,
+    # ----- Per-matchup ceiling: only where groups reach min_support ----------
+    row_rate, supported_row, supported_matchups, observed_matchups = _per_matchup_rates(
+        target_array, matchup_ids, len(key_to_id), min_support
+    )
+    supported_rows = int(supported_row.sum())
+    coverage = supported_rows / rows_total if rows_total else 0.0
+    ceiling: dict[str, Any] = {
+        "observed_matchups": observed_matchups,
+        "supported_matchups": supported_matchups,
+        "supported_rows": supported_rows,
+        "coverage": coverage,
+    }
+
+    reliable = False
+    oracle_violated = False
+    global_gap: float | None = None
+    auc_capture: float | None = None
+    model_block: dict[str, Any] = {}
+
+    if supported_rows > 0:
+        sup_targets = target_array[supported_row]
+        sup_rate = row_rate[supported_row]
+        sup_model = model_array[supported_row]
+        sup_prior = prior_array[supported_row]
+
+        irreducible_brier = float(np.mean(sup_rate * (1.0 - sup_rate)))
+        oracle = _scalar_metrics(sup_targets, sup_rate)
+        model_supported = _scalar_metrics(sup_targets, sup_model)
+        prior_supported = _scalar_metrics(sup_targets, sup_prior)
+
+        ceiling["irreducible_brier"] = irreducible_brier
+        ceiling["oracle_brier"] = _safe(oracle["brier_score"])
+        ceiling["oracle_auc"] = _safe(oracle["auc"])
+
+        model_auc = _safe(model_supported["auc"])
+        oracle_auc = ceiling["oracle_auc"]
+        model_brier = float(model_supported["brier_score"])
+        prior_brier = float(prior_supported["brier_score"])
+        global_gap = model_brier - irreducible_brier
+
+        auc_capture = (
+            _capture_fraction(model_auc, 0.5, oracle_auc)
+            if model_auc is not None and oracle_auc is not None
+            else None
+        )
+        model_block = {
+            "auc_supported": model_auc,
+            "brier_supported": model_brier,
+            "gap_to_floor": global_gap,
+            "auc_capture_vs_oracle": auc_capture,
+            "brier_capture_vs_prior": _capture_fraction(
+                model_brier, prior_brier, irreducible_brier
+            ),
         }
+        report["model"] = model_block
+        ceiling["matrix_prior_brier_supported"] = prior_brier
+
+        # The oracle predicts the true per-(matchup,segment) rate, i.e. it
+        # conditions on everything the model sees. If the model still beats it,
+        # the key is too coarse / the rate is non-stationary -> not a ceiling.
+        oracle_violated = bool(
+            global_gap < -ORACLE_VIOLATION_EPS
+            or (
+                model_auc is not None
+                and oracle_auc is not None
+                and model_auc > oracle_auc + ORACLE_VIOLATION_EPS
+            )
+        )
+        reliable = bool(
+            coverage >= MIN_RELIABLE_COVERAGE
+            and supported_matchups >= MIN_RELIABLE_MATCHUPS
+            and not oracle_violated
+        )
+
+    report["theoretical_ceiling"] = ceiling
+    report["reliable"] = reliable
+    report["oracle_violated"] = oracle_violated
+
+    # Per-segment gap to the (segment-local) floor, worst first. Only meaningful
+    # when the per-matchup ceiling itself is reliable.
+    by_segment: dict[str, dict[str, Any]] = {}
+    if reliable and global_gap is not None:
+        for segment_id, segment in enumerate(segment_names):
+            seg_mask = (segment_ids == segment_id) & supported_row
+            seg_rows = int(seg_mask.sum())
+            if seg_rows < SEGMENT_MIN_ROWS:
+                continue
+            seg_rate = row_rate[seg_mask]
+            seg_targets = target_array[seg_mask]
+            seg_model = model_array[seg_mask]
+            seg_irreducible = float(np.mean(seg_rate * (1.0 - seg_rate)))
+            seg_brier = float(_scalar_metrics(seg_targets, seg_model)["brier_score"])
+            seg_gap = seg_brier - seg_irreducible
+            by_segment[segment] = {
+                "supported_rows": seg_rows,
+                "win_rate": float(seg_targets.mean()),
+                "irreducible_brier": seg_irreducible,
+                "model_brier": seg_brier,
+                "gap_to_floor": seg_gap,
+                "gap_ratio_vs_global": (seg_gap / global_gap) if global_gap > 1e-9 else None,
+            }
     report["by_segment"] = dict(
         sorted(by_segment.items(), key=lambda item: item[1]["gap_to_floor"], reverse=True)
     )
 
     weaknesses, recommendations = derive_diagnosis(
         {
-            "auc_capture": auc_capture,
-            "model_auc": model_auc,
-            "oracle_auc": oracle_auc,
-            "gap_to_floor": global_gap,
-            "irreducible_brier": irreducible_brier,
-            "brier_capture_vs_prior": model_block["brier_capture_vs_prior"],
-            "calibration_slope": model_block["calibration_slope"],
-            "ece_quantile": model_block["expected_calibration_error_quantile"],
-            "coverage": ceiling["coverage"],
+            "reliable": reliable,
+            "oracle_violated": oracle_violated,
+            "coverage": coverage,
             "supported_matchups": supported_matchups,
+            "observed_matchups": observed_matchups,
+            "beats_matrix_prior": report["beats_matrix_prior"],
+            "model_brier_all": model_brier_all,
+            "prior_brier_all": prior_brier_all,
+            "model_auc_all": model_auc_all,
+            "calibration_slope": report["model_overall"]["calibration_slope"],
+            "ece_quantile": report["model_overall"]["expected_calibration_error_quantile"],
+            # Oracle-derived stats (only trusted when reliable).
+            "auc_capture": auc_capture,
+            "model_auc": model_block.get("auc_supported"),
+            "oracle_auc": ceiling.get("oracle_auc"),
+            "gap_to_floor": global_gap,
+            "irreducible_brier": ceiling.get("irreducible_brier"),
+            "brier_capture_vs_prior": model_block.get("brier_capture_vs_prior"),
             "by_segment": report["by_segment"],
         }
     )
@@ -283,20 +345,193 @@ def analyze_ceiling(
     return report
 
 
+def _append_calibration(
+    stats: dict[str, Any],
+    weaknesses: list[dict],
+    recommendations: list[dict],
+    severity_rank: dict[str, int],
+) -> None:
+    """Calibration weakness/fix; valid on all rows regardless of ceiling support."""
+    slope = stats.get("calibration_slope")
+    ece = stats.get("ece_quantile")
+    slope_off = slope is not None and abs(slope - 1.0) > 0.15
+    ece_off = ece is not None and ece > 0.02
+    if not (slope_off or ece_off):
+        return
+    hard = (slope is not None and abs(slope - 1.0) > 0.30) or (ece is not None and ece > 0.04)
+    severity = "high" if hard else "medium"
+    direction = ""
+    if slope is not None:
+        direction = " surconfiant" if slope < 1.0 else " sousconfiant"
+    weaknesses.append(
+        {
+            "area": "calibration",
+            "severity": severity,
+            "metric": "calibration_slope / ece_quantile",
+            "value": {"slope": _safe(slope), "ece_quantile": _safe(ece)},
+            "summary": f"Calibration imparfaite{direction} (pente {slope}, ECE {ece}).",
+            "detail": "Pente <1 = surconfiant, >1 = sousconfiant; vise pente ~1 et ECE bas.",
+        }
+    )
+    if slope is not None and slope < 1.0:
+        action = (
+            "Modele surconfiant: augmente training.label_smoothing (0.02->0.04) et "
+            "verifie la calibration par segment (training.segment_calibration_min_rows)."
+        )
+    else:
+        action = (
+            "Modele sousconfiant: baisse training.label_smoothing et resserre la "
+            "calibration par segment (training.segment_calibration_min_rows)."
+        )
+    recommendations.append(
+        {
+            "priority": severity_rank[severity],
+            "area": "calibration",
+            "lever": "label smoothing + per-segment calibration",
+            "action": action,
+            "why": "Rapprocher la pente de 1 et reduire l'ECE sans toucher a la discrimination.",
+        }
+    )
+
+
+def _append_coverage(
+    stats: dict[str, Any],
+    weaknesses: list[dict],
+    recommendations: list[dict],
+    severity_rank: dict[str, int],
+) -> None:
+    """Coverage weakness/fix: share of rows in a supported (matchup,segment)."""
+    coverage = float(stats.get("coverage") or 0.0)
+    if coverage < 0.50:
+        severity = "high"
+    elif coverage < 0.75:
+        severity = "medium"
+    else:
+        severity = "good"
+    weaknesses.append(
+        {
+            "area": "coverage",
+            "severity": severity,
+            "metric": "coverage",
+            "value": round(coverage, 4),
+            "summary": (
+                f"{coverage * 100:.1f}% des lignes tombent dans un matchup supporte "
+                f"(>= min_support); {stats.get('supported_matchups')} matchups supportes."
+            ),
+            "detail": "Une faible couverture signifie que le plafond ne couvre qu'une part de la meta.",
+        }
+    )
+    if severity != "good":
+        recommendations.append(
+            {
+                "priority": severity_rank[severity],
+                "area": "coverage",
+                "lever": "data collection",
+                "action": (
+                    "Collecte plus de combats sur les zones creuses: "
+                    "`collect-api --balance` (vise les bandes de trophees sous-representees), "
+                    "puis `prepare`. Verifie la generalisation hors-meta avec `evaluate-unseen`."
+                ),
+                "why": "Plus de matchups franchissent le support: le plafond couvre plus de meta.",
+            }
+        )
+
+
 def derive_diagnosis(stats: dict[str, Any]) -> tuple[list[dict], list[dict]]:
     """Map ceiling gaps to ranked weaknesses and concrete repo-grounded fixes.
 
     Pure function (no torch / no IO) so the diagnosis logic stays unit-testable.
+    When ``reliable`` is false the per-matchup ceiling could not be estimated
+    (exact matchups do not repeat, or the model beats the oracle); the diagnosis
+    then leads with that, surfaces the metrics that *are* valid (calibration, the
+    model vs the matrix_prior baseline) and skips the bogus oracle-based verdicts.
     """
     weaknesses: list[dict] = []
     recommendations: list[dict] = []
     severity_rank = {"high": 0, "medium": 1, "low": 2, "good": 3}
 
+    reliable = bool(stats.get("reliable", True))
+
+    if not reliable:
+        oracle_violated = bool(stats.get("oracle_violated", False))
+        coverage = float(stats.get("coverage") or 0.0)
+        reasons: list[str] = []
+        if coverage < MIN_RELIABLE_COVERAGE:
+            reasons.append(
+                f"couverture {coverage * 100:.1f}% < {MIN_RELIABLE_COVERAGE * 100:.0f}% "
+                "(les matchups exacts ne se repetent quasiment jamais)"
+            )
+        if oracle_violated:
+            reasons.append(
+                "le modele bat l'oracle par segment (cle de matchup trop grossiere "
+                "ou taux non-stationnaire): l'oracle n'est donc pas un vrai plafond"
+            )
+        if stats.get("supported_matchups") is not None and (
+            stats.get("supported_matchups") or 0
+        ) < MIN_RELIABLE_MATCHUPS:
+            reasons.append(
+                f"seulement {stats.get('supported_matchups')} matchups supportes "
+                f"(< {MIN_RELIABLE_MATCHUPS})"
+            )
+        weaknesses.append(
+            {
+                "area": "ceiling_reliability",
+                "severity": "high",
+                "metric": "reliable",
+                "value": False,
+                "summary": "Plafond par matchup non estimable de facon fiable.",
+                "detail": "; ".join(reasons) if reasons else "Support insuffisant.",
+            }
+        )
+
+        # The valid, support-free takeaway: model vs the empirical prior baseline.
+        beats_prior = stats.get("beats_matrix_prior")
+        model_brier_all = stats.get("model_brier_all")
+        prior_brier_all = stats.get("prior_brier_all")
+        if beats_prior is not None and model_brier_all is not None and prior_brier_all is not None:
+            weaknesses.append(
+                {
+                    "area": "baseline",
+                    "severity": "good" if beats_prior else "high",
+                    "metric": "brier_all_rows vs matrix_prior",
+                    "value": {"model": round(model_brier_all, 4), "prior": round(prior_brier_all, 4)},
+                    "summary": (
+                        f"Brier modele {model_brier_all:.4f} vs matrix_prior "
+                        f"{prior_brier_all:.4f} (toutes lignes) -> "
+                        + ("le modele bat le prior." if beats_prior else "le modele ne bat pas le prior.")
+                    ),
+                    "detail": "Mesure valable sans support par matchup (le vrai signal sur ces donnees).",
+                }
+            )
+
+        _append_calibration(stats, weaknesses, recommendations, severity_rank)
+        _append_coverage(stats, weaknesses, recommendations, severity_rank)
+
+        recommendations.insert(
+            0,
+            {
+                "priority": 0,
+                "area": "ceiling_reliability",
+                "lever": "right tool for non-repeating matchups",
+                "action": (
+                    "Le plafond par matchup exact n'est pas estimable ici. Juge le modele "
+                    "avec `benchmark` (vs matrix_prior + plancher de bruit) et `evaluate-unseen` "
+                    "(generalisation hors-meta). Pour un plafond estimable, collecte plus de "
+                    "combats sur des matchups repetes ou groupe par archetype."
+                ),
+                "why": "Les decks exacts ne se repetent pas: un plafond par matchup exact est du bruit.",
+            },
+        )
+
+        weaknesses.sort(key=lambda item: severity_rank.get(item["severity"], 9))
+        recommendations.sort(key=lambda item: item["priority"])
+        for index, recommendation in enumerate(recommendations, start=1):
+            recommendation["priority"] = index
+        return weaknesses, recommendations
+
+    # ----- Reliable per-matchup ceiling: full oracle-based diagnosis ---------
     auc_capture = stats.get("auc_capture")
     gap = float(stats.get("gap_to_floor") or 0.0)
-    slope = stats.get("calibration_slope")
-    ece = stats.get("ece_quantile")
-    coverage = float(stats.get("coverage") or 0.0)
 
     # 1. Discrimination: how much of the attainable AUC the model captures.
     if auc_capture is not None:
@@ -375,78 +610,10 @@ def derive_diagnosis(stats: dict[str, Any]) -> tuple[list[dict], list[dict]]:
     )
 
     # 3. Calibration: over/under-confidence on top of raw discrimination.
-    slope_off = slope is not None and abs(slope - 1.0) > 0.15
-    ece_off = ece is not None and ece > 0.02
-    if slope_off or ece_off:
-        hard = (slope is not None and abs(slope - 1.0) > 0.30) or (ece is not None and ece > 0.04)
-        severity = "high" if hard else "medium"
-        direction = ""
-        if slope is not None:
-            direction = " surconfiant" if slope < 1.0 else " sousconfiant"
-        weaknesses.append(
-            {
-                "area": "calibration",
-                "severity": severity,
-                "metric": "calibration_slope / ece_quantile",
-                "value": {"slope": _safe(slope), "ece_quantile": _safe(ece)},
-                "summary": f"Calibration imparfaite{direction} (pente {slope}, ECE {ece}).",
-                "detail": "Pente <1 = surconfiant, >1 = sousconfiant; vise pente ~1 et ECE bas.",
-            }
-        )
-        if slope is not None and slope < 1.0:
-            action = (
-                "Modele surconfiant: augmente training.label_smoothing (0.02->0.04) et "
-                "verifie la calibration par segment (training.segment_calibration_min_rows)."
-            )
-        else:
-            action = (
-                "Modele sousconfiant: baisse training.label_smoothing et resserre la "
-                "calibration par segment (training.segment_calibration_min_rows)."
-            )
-        recommendations.append(
-            {
-                "priority": severity_rank[severity],
-                "area": "calibration",
-                "lever": "label smoothing + per-segment calibration",
-                "action": action,
-                "why": "Rapprocher la pente de 1 et reduire l'ECE sans toucher a la discrimination.",
-            }
-        )
+    _append_calibration(stats, weaknesses, recommendations, severity_rank)
 
     # 4. Coverage: share of the meta with enough games to trust a matchup rate.
-    if coverage < 0.50:
-        severity = "high"
-    elif coverage < 0.75:
-        severity = "medium"
-    else:
-        severity = "good"
-    weaknesses.append(
-        {
-            "area": "coverage",
-            "severity": severity,
-            "metric": "coverage",
-            "value": round(coverage, 4),
-            "summary": (
-                f"{coverage * 100:.0f}% des lignes tombent dans un matchup supporte "
-                f"(>= min_support); {stats.get('supported_matchups')} matchups supportes."
-            ),
-            "detail": "Une faible couverture signifie que le plafond ne couvre qu'une part de la meta.",
-        }
-    )
-    if severity != "good":
-        recommendations.append(
-            {
-                "priority": severity_rank[severity],
-                "area": "coverage",
-                "lever": "data collection",
-                "action": (
-                    "Collecte plus de combats sur les zones creuses: "
-                    "`collect-api --balance` (vise les bandes de trophees sous-representees), "
-                    "puis `prepare`. Verifie la generalisation hors-meta avec `evaluate-unseen`."
-                ),
-                "why": "Plus de matchups franchissent le support: le plafond couvre plus de meta.",
-            }
-        )
+    _append_coverage(stats, weaknesses, recommendations, severity_rank)
 
     # 5. Per-segment weak spots: segments far above the global gap.
     by_segment = stats.get("by_segment") or {}
@@ -499,57 +666,77 @@ def format_ceiling_report(report: dict[str, Any]) -> str:
         f"split={report['split']}  rows={report['rows']:,}  "
         f"win_rate={report['win_rate']:.4f}  min_support={report['min_support']}"
     )
+    if report.get("matchup_key"):
+        lines.append(f"cle matchup={report['matchup_key']}")
 
     if report.get("warning"):
         lines.append("")
         lines.append(f"!! {report['warning']}")
         return "\n".join(lines)
 
-    ceiling = report["theoretical_ceiling"]
-    model = report["model"]
-    lines.append("")
-    lines.append("PLAFOND (meilleur atteignable, estime sur les matchups supportes)")
-    lines.append(f"  Brier irreductible (plancher) : {ceiling['irreducible_brier']:.4f}")
-    if ceiling.get("oracle_auc") is not None:
-        lines.append(f"  AUC oracle (plafond AUC)      : {ceiling['oracle_auc']:.4f}")
-    lines.append(
-        f"  Couverture                    : {ceiling['coverage'] * 100:.1f}%  "
-        f"({ceiling['supported_matchups']}/{ceiling['observed_matchups']} matchups)"
-    )
+    # Always-valid block (no per-matchup support needed).
+    overall = report.get("model_overall")
+    baselines = report.get("baselines")
+    if overall:
+        lines.append("")
+        lines.append("MODELE (toutes lignes — mesures valides sans support par matchup)")
+        if overall.get("auc_all_rows") is not None:
+            lines.append(f"  AUC modele                    : {overall['auc_all_rows']:.4f}")
+        lines.append(f"  Brier modele                  : {overall['brier_all_rows']:.4f}")
+        if baselines and baselines.get("matrix_prior_brier_all_rows") is not None:
+            verdict = "bat le prior" if report.get("beats_matrix_prior") else "sous le prior"
+            lines.append(
+                f"  Brier matrix_prior            : {baselines['matrix_prior_brier_all_rows']:.4f}"
+                f"  ({verdict})"
+            )
+        lines.append(
+            f"  Calibration: pente {overall.get('calibration_slope')}  "
+            f"ECE(q) {overall.get('expected_calibration_error_quantile')}"
+        )
 
-    lines.append("")
-    lines.append("MODELE vs PLAFOND")
-    if model.get("auc_supported") is not None:
-        lines.append(f"  AUC modele                    : {model['auc_supported']:.4f}")
-    if model.get("auc_capture_vs_oracle") is not None:
+    reliable = report.get("reliable", True)
+    ceiling = report.get("theoretical_ceiling") or {}
+    if ceiling:
+        lines.append("")
+        lines.append("PLAFOND PAR MATCHUP (deck-pair @ segment, support >= min_support)")
         lines.append(
-            f"  Discrimination captee         : {model['auc_capture_vs_oracle'] * 100:.0f}% "
-            "de l'AUC oracle"
+            f"  Couverture                    : {ceiling.get('coverage', 0.0) * 100:.1f}%  "
+            f"({ceiling.get('supported_matchups', 0)}/{ceiling.get('observed_matchups', 0)} matchups)"
         )
-    lines.append(f"  Brier modele (supporte)       : {model['brier_supported']:.4f}")
-    lines.append(f"  Ecart au plancher             : {model['gap_to_floor']:.4f}")
-    if model.get("brier_capture_vs_prior") is not None:
-        lines.append(
-            f"  Marge prior->plancher captee  : {model['brier_capture_vs_prior'] * 100:.0f}%"
-        )
-    lines.append(
-        f"  Calibration: pente {model.get('calibration_slope')}  "
-        f"ECE(q) {model.get('expected_calibration_error_quantile')}"
-    )
+        if not reliable:
+            lines.append("")
+            lines.append("  !! PLAFOND NON FIABLE — non estimable sur ces donnees.")
+            if report.get("oracle_violated"):
+                lines.append("     (le modele bat l'oracle => cle trop grossiere / non-stationnaire)")
+            lines.append("     Les matchups exacts ne se repetent pas; juge via benchmark + evaluate-unseen.")
+        else:
+            model = report.get("model") or {}
+            lines.append(f"  Brier irreductible (plancher) : {ceiling.get('irreducible_brier'):.4f}")
+            if ceiling.get("oracle_auc") is not None:
+                lines.append(f"  AUC oracle (plafond AUC)      : {ceiling['oracle_auc']:.4f}")
+            if model.get("auc_supported") is not None:
+                lines.append(f"  AUC modele (supporte)         : {model['auc_supported']:.4f}")
+            if model.get("auc_capture_vs_oracle") is not None:
+                lines.append(
+                    f"  Discrimination captee         : {model['auc_capture_vs_oracle'] * 100:.0f}% "
+                    "de l'AUC oracle"
+                )
+            if model.get("gap_to_floor") is not None:
+                lines.append(f"  Ecart au plancher             : {model['gap_to_floor']:.4f}")
 
     lines.append("")
     lines.append("FAIBLESSES (triees par severite)")
     icons = {"high": "[HIGH]", "medium": "[MED ]", "low": "[LOW ]", "good": "[ OK ]"}
-    for weakness in report["weaknesses"]:
+    for weakness in report.get("weaknesses", []):
         lines.append(f"  {icons.get(weakness['severity'], '[????]')} {weakness['summary']}")
         if weakness.get("detail"):
             lines.append(f"          -> {weakness['detail']}")
 
     lines.append("")
     lines.append("AMELIORATIONS (pour s'approcher du plafond, par priorite)")
-    if not report["recommendations"]:
+    if not report.get("recommendations"):
         lines.append("  (aucune: le modele est deja proche du plafond sur cette mesure)")
-    for recommendation in report["recommendations"]:
+    for recommendation in report.get("recommendations", []):
         lines.append(
             f"  {recommendation['priority']}. [{recommendation['area']}] "
             f"{recommendation['action']}"

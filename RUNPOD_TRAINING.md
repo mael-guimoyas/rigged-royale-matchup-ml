@@ -147,13 +147,26 @@ CHECKPOINT=/workspace/artifacts/matchup-model.pt
 
 It prints a terminal summary and writes `artifacts/ceiling-<split>-report.json`.
 The ceiling is the irreducible Brier `p*(1-p)` plus the AUC of an oracle that
-predicts the true per-matchup rate; the report shows how much of that the model
-captures, then where it loses ground (discrimination, calibration, coverage,
-per-segment) with prioritised fixes. You can also call it directly:
+predicts the true rate of each `deck-pair @ segment` group; the report shows how
+much of that the model captures, then where it loses ground (discrimination,
+calibration, coverage, per-segment) with prioritised fixes. You can also call it
+directly:
 
 ```bash
 rigged-matchup ceiling artifacts/matchup-model.pt --split test --min-support 100
 ```
+
+**Reliability:** the matchup key is the unordered deck pair **plus the segment**,
+so the oracle conditions on everything the model sees (otherwise the model beats
+a deck-only oracle and you get nonsense like "365% captured" or a negative gap).
+On real data exact deck pairs almost never repeat, so very few groups reach
+`min_support`: when coverage is too low — or the model still beats the oracle —
+the report sets `reliable: false` and says the per-matchup ceiling is **not
+estimable** instead of printing garbage. Lowering `--min-support` raises coverage
+slightly but does not make non-repeating matchups estimable. In that case the
+report still surfaces the metrics that *are* valid (calibration on every row, and
+the model's Brier vs the `matrix_prior` baseline); judge the model with
+`benchmark` and `evaluate-unseen` rather than the per-matchup ceiling.
 
 ## After training
 

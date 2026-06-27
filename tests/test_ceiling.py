@@ -98,3 +98,79 @@ def test_format_report_handles_no_support_warning() -> None:
     text = format_ceiling_report(report)
     assert "PLAFOND THEORIQUE" in text
     assert "min_support" in text
+
+
+def test_diagnosis_unreliable_leads_with_reliability_and_baseline() -> None:
+    # The real test-split case: exact matchups never repeat, the model "beats"
+    # the oracle -> the per-matchup ceiling is not estimable.
+    weaknesses, recommendations = derive_diagnosis(
+        {
+            "reliable": False,
+            "oracle_violated": True,
+            "coverage": 0.006,
+            "supported_matchups": 172,
+            "beats_matrix_prior": True,
+            "model_brier_all": 0.2234,
+            "prior_brier_all": 0.2490,
+            "model_auc_all": 0.665,
+            "calibration_slope": 0.95,
+            "ece_quantile": 0.010,
+            # Oracle-derived stats are present but must be ignored when unreliable.
+            "auc_capture": 3.65,
+            "model_auc": 0.665,
+            "oracle_auc": 0.545,
+            "gap_to_floor": -0.0193,
+            "irreducible_brier": 0.2481,
+            "brier_capture_vs_prior": 11.18,
+            "by_segment": {},
+        }
+    )
+
+    areas = {weakness["area"] for weakness in weaknesses}
+    assert "ceiling_reliability" in areas
+    assert "baseline" in areas
+    # The bogus oracle-based verdicts must NOT be emitted when unreliable.
+    assert "discrimination" not in areas
+    assert "brier_gap" not in areas
+    # The baseline takeaway is the valid, positive signal.
+    baseline = next(w for w in weaknesses if w["area"] == "baseline")
+    assert baseline["severity"] == "good"
+    # Recommendations are ranked, contiguous and steer to the right tools.
+    assert [r["priority"] for r in recommendations] == list(range(1, len(recommendations) + 1))
+    assert any(r["area"] == "ceiling_reliability" for r in recommendations)
+
+
+def test_format_report_shows_unreliable_banner() -> None:
+    report = {
+        "split": "test",
+        "rows": 6_987_184,
+        "win_rate": 0.508,
+        "min_support": 100,
+        "matchup_key": "unordered_deck_pair @ segment",
+        "reliable": False,
+        "oracle_violated": True,
+        "model_overall": {
+            "auc_all_rows": 0.665,
+            "brier_all_rows": 0.2234,
+            "calibration_slope": 0.95,
+            "calibration_intercept": -0.02,
+            "expected_calibration_error_quantile": 0.010,
+            "mean_prediction": 0.514,
+        },
+        "baselines": {"matrix_prior_brier_all_rows": 0.2490, "constant_0.5_brier": 0.25},
+        "beats_matrix_prior": True,
+        "theoretical_ceiling": {
+            "observed_matchups": 6_671_364,
+            "supported_matchups": 172,
+            "supported_rows": 38_812,
+            "coverage": 0.0056,
+        },
+        "by_segment": {},
+        "weaknesses": [],
+        "recommendations": [],
+    }
+    text = format_ceiling_report(report)
+    assert "NON FIABLE" in text
+    assert "bat le prior" in text
+    # Impossible capture percentages must never reach the summary.
+    assert "365%" not in text
