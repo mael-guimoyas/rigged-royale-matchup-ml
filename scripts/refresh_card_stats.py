@@ -9,6 +9,14 @@ champions::
 Then paste the output over the literals in ``src/rigged_matchup_ml/card_stats.py``.
 Kept as a print-only helper so the bundled table stays an auditable literal
 (works offline, e.g. in the Kaggle trainer) rather than a runtime fetch.
+
+WARNING -- the upstream feed is stale. As of 2026-07 ``cards.json`` still stops
+at 120 cards (highest id 28000020): it has none of Boss Bandit (26000103), Ronin
+(26000106), Void, Goblin Curse, Spirit Empress or Vines. Pasting its output
+verbatim would DELETE those rows from ``CARD_ELIXIR``. Diff the output against
+the current table and only take the ids it actually adds; add anything newer by
+hand (id + elixir from the card's RoyaleAPI page / the CR API ``/cards``
+endpoint).
 """
 
 from __future__ import annotations

@@ -44,7 +44,7 @@ CARD_ELIXIR: dict[int, int] = {
     26000075: 4, 26000077: 5, 26000078: 3, 26000080: 4, 26000081: 4,
     26000082: 5, 26000083: 4, 26000084: 1, 26000085: 7, 26000086: 5,
     26000087: 4, 26000093: 3, 26000095: 4, 26000096: 5, 26000097: 2,
-    26000099: 5, 26000101: 4, 26000102: 2, 26000103: 6,
+    26000099: 5, 26000101: 4, 26000102: 2, 26000103: 6, 26000106: 5,
     27000000: 3, 27000001: 5, 27000002: 4, 27000003: 5, 27000004: 4,
     27000005: 6, 27000006: 4, 27000007: 6, 27000008: 6, 27000009: 3,
     27000010: 4, 27000012: 4, 27000013: 4, 27000014: 5,
@@ -102,6 +102,12 @@ CARD_METADATA_FLAGS: tuple[str, ...] = (
     "spawner",
     "building_target",
     "champion",
+    # Passive damage reflection / parry: the card periodically blocks an incoming
+    # melee hit and sends it back. It flips the whole melee side of a matchup
+    # (Ronin beats P.E.K.K.A / Mega Knight / Prince 1v1) while doing nothing
+    # against ranged, air or swarm -- exactly the structure the model has to
+    # learn, and it is not expressible with the other flags.
+    "reflect",
 )
 CARD_METADATA_TAGS: tuple[str, ...] = (*CARD_METADATA_ROLES, *CARD_METADATA_FLAGS)
 # Bucketed (ordinal) numerics in [0, 1]; coarse on purpose so balance changes do

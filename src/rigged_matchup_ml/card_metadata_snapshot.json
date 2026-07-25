@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "generated_at": "2026-06-26T21:08:35+00:00",
+  "generated_at": "2026-07-25T10:50:45+00:00",
   "source": {
     "method": "hand-curated taxonomy (offline, no scraping)",
     "generator": "scripts/refresh_card_metadata.py::CARD_TABLE"
@@ -32,7 +32,8 @@
       "reset_control",
       "spawner",
       "building_target",
-      "champion"
+      "champion",
+      "reflect"
     ],
     "numeric_features": [
       "elixir",
@@ -3499,6 +3500,40 @@
         "tags": [
           "ability_dash"
         ]
+      }
+    },
+    "26000106": {
+      "name": "Ronin",
+      "key": "ronin",
+      "type": "troop",
+      "role": "dps",
+      "tags": [
+        "dps",
+        "high_dps",
+        "reflect"
+      ],
+      "tiers": {
+        "hitpoints": 3,
+        "damage": 4,
+        "dps": 4,
+        "speed": 3,
+        "range": 1,
+        "elixir": 5
+      },
+      "grid": {
+        "hitpoints": 12,
+        "damage": 15,
+        "dps": 15,
+        "range": 4,
+        "speed": 6
+      },
+      "numeric": {
+        "elixir": 0.5556,
+        "hitpoints": 0.6,
+        "damage": 0.75,
+        "dps": 0.75,
+        "speed": 0.75,
+        "range": 0.2
       }
     },
     "27000000": {

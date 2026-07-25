@@ -9,6 +9,7 @@ from typing import Any
 
 import duckdb
 
+from .card_stats import CARD_ELIXIR
 from .config import AppConfig
 
 
@@ -67,6 +68,35 @@ def prepare_splits(config: AppConfig, overwrite: bool = False) -> dict[str, Any]
         f"prepare: rows raw={raw_total:,} unique={dedup_total:,} "
         f"duplicates_removed={raw_total - dedup_total:,}"
     )
+
+    # Rolling history window. The split is chronological, so a card released
+    # yesterday only ever lands in validation/test if the corpus still carries
+    # years of pre-release battles -- the model then never trains on it. Trimming
+    # the oldest battles moves the train cutoff forward so the new card falls
+    # inside the train period too. Null = keep everything (previous behaviour).
+    max_history_days = config.data.get("max_history_days")
+    history_cutoff_epoch: float | None = None
+    dropped_old = 0
+    if max_history_days is not None:
+        latest = connection.execute(
+            "select max(epoch(battle_time)) from raw_dedup"
+        ).fetchone()[0]
+        history_cutoff_epoch = float(latest) - float(max_history_days) * 86400.0
+        connection.execute(
+            f"delete from raw_dedup where epoch(battle_time) < {history_cutoff_epoch}"
+        )
+        kept = connection.execute("select count(*) from raw_dedup").fetchone()[0]
+        dropped_old = dedup_total - kept
+        dedup_total = kept
+        _log(
+            f"prepare: history window {max_history_days}d "
+            f"dropped_old={dropped_old:,} kept={dedup_total:,}"
+        )
+        if dedup_total == 0:
+            raise RuntimeError(
+                f"max_history_days={max_history_days} dropped every battle; widen the window."
+            )
+
     _log("prepare: computing chronological train/validation cutoffs")
     quantiles = connection.execute(
         """
@@ -103,8 +133,9 @@ def prepare_splits(config: AppConfig, overwrite: bool = False) -> dict[str, Any]
         _log(f"prepare: {split} rows={counts[split]:,}")
 
     train_file = _quoted(prepared_dir / "train" / "*.parquet")
+    all_file = _quoted(prepared_dir / "*" / "*.parquet")
     _log("prepare: building vocabularies from train split")
-    card_ids = [
+    train_card_ids = [
         row[0]
         for row in connection.execute(
             f"""
@@ -116,6 +147,17 @@ def prepare_splits(config: AppConfig, overwrite: bool = False) -> dict[str, Any]
             """
         ).fetchall()
     ]
+    # A card absent from train (a card released after the train cutoff, e.g.
+    # Ronin) would otherwise encode to index 0 -- the padding slot -- so it would
+    # be indistinguishable from an empty deck position at validation/test time.
+    # Seeding the vocabulary from the static card table gives every known card its
+    # own embedding row; an unseen row simply stays at its init and the card is
+    # then carried by its metadata vector instead of being silently erased.
+    seed_vocabulary = bool(config.data.get("seed_card_vocabulary", True))
+    seeded_ids = sorted(set(CARD_ELIXIR) - set(train_card_ids)) if seed_vocabulary else []
+    card_ids = sorted(set(train_card_ids) | set(seeded_ids))
+    if seeded_ids:
+        _log(f"prepare: seeded {len(seeded_ids)} card ids absent from train: {seeded_ids}")
     tower_ids = [
         row[0]
         for row in connection.execute(
@@ -167,14 +209,42 @@ def prepare_splits(config: AppConfig, overwrite: bool = False) -> dict[str, Any]
     (prepared_dir / "card_frequencies.json").write_text(
         json.dumps(card_counts, indent=2, sort_keys=True), encoding="utf-8"
     )
+    # Cards the corpus contains but the train period does not: a card released
+    # after the train cutoff cannot be learned, only evaluated. Surfacing it here
+    # is the signal to collect more post-release battles or to shorten
+    # ``max_history_days`` before retraining.
+    _log("prepare: checking card coverage of the train split")
+    corpus_card_ids = {
+        int(row[0])
+        for row in connection.execute(
+            f"""
+            select distinct card_id from (
+              select unnest(team_card_ids) card_id from read_parquet('{all_file}')
+              union all
+              select unnest(opponent_card_ids) card_id from read_parquet('{all_file}')
+            )
+            """
+        ).fetchall()
+    }
+    untrained_cards = sorted(corpus_card_ids - set(train_card_ids))
+    if untrained_cards:
+        _log(
+            "prepare: WARNING cards present in the corpus but never in train "
+            f"(no learned embedding): {untrained_cards}"
+        )
     manifest = {
         "counts": counts,
         "raw_rows": raw_total,
         "unique_rows": dedup_total,
         "duplicates_removed": raw_total - dedup_total,
+        "dropped_before_history_window": dropped_old,
+        "max_history_days": max_history_days,
+        "history_cutoff_epoch": history_cutoff_epoch,
         "train_cutoff_epoch": train_cutoff,
         "validation_cutoff_epoch": validation_cutoff,
         "vocabulary_sizes": {key: len(value) + 1 for key, value in vocabulary.items()},
+        "seeded_card_ids": seeded_ids,
+        "cards_absent_from_train": untrained_cards,
         "split_policy": "chronological 70/15/15 by battle_time",
     }
     (prepared_dir / "manifest.json").write_text(

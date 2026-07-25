@@ -346,6 +346,97 @@ Les rôles utilisent les codes suivants : `1=normal`, `2=champion`, `3=hero`. L'
 la carte reste toujours la variable principale ; un nouveau héros est donc supporté dès que
 son ID apparaît dans les données d'entraînement.
 
+## Ajouter une nouvelle carte (procédure complète)
+
+Exemple réel : **Ronin** (`26000106`, saison 85, juillet 2026), légendaire à 5 élixirs,
+troupe de mêlée au sol, 1779 PV / 337 dégâts à 1,4 s, vitesse *Fast*. Sa mécanique
+**Parry** bloque une attaque de mêlée au sol toutes les 3,5 s et la renvoie environ
+doublée : il gagne le 1v1 contre toute la mêlée lourde (P.E.K.K.A, Mega Knight, Prince,
+Boss Bandit) et ne fait rien contre le distant, l'aérien et le swarm.
+
+Ronin est déjà intégré. Les quatre points ci-dessous décrivent ce qu'il faut refaire pour
+la prochaine carte.
+
+### 1. Identité et métadonnées statiques
+
+1. `src/rigged_matchup_ml/card_stats.py` : ajouter `id: elixir` dans `CARD_ELIXIR`, et l'id
+   dans `CHAMPION_CARD_IDS` si la carte est un champion.
+2. `scripts/refresh_card_metadata.py` : ajouter une ligne dans `CARD_TABLE`
+   (`type, role, flags, hp, dmg, dps, speed, range` en paliers 0–5), le nom dans
+   `CARD_NAMES`, éventuellement un `NUDGES` pour la séparer d'une carte du même palier, et
+   une entrée `CHAMPION_ABILITY` / `HERO_ABILITY` / `EVO_EFFECT` si la forme existe.
+3. Régénérer le snapshot embarqué :
+
+```powershell
+python scripts/refresh_card_metadata.py
+```
+
+`scripts/refresh_card_stats.py` ne sert plus à grand-chose : le flux `cr-api-data` amont
+est figé à 120 cartes (id max `28000020`) et ne connaît ni Boss Bandit ni Ronin. Coller sa
+sortie telle quelle **supprimerait** les cartes récentes de `CARD_ELIXIR`.
+
+Un mécanisme vraiment nouveau peut mériter un flag dans `CARD_METADATA_FLAGS` : le parry a
+reçu `reflect`. **Attention** : tout ajout de flag change `CARD_METADATA_VECTOR_SIZE`, donc
+la dimension d'entrée du modèle. Les checkpoints antérieurs ne se chargent plus
+(`card_metadata_dim` mismatch) tant que l'entraînement n'a pas été refait.
+
+### 2. Récupérer des combats contenant la carte
+
+Rien de spécifique côté collecte : `collect-api` prend tous les combats des joueurs
+crawlés, donc la nouvelle carte arrive dès qu'elle est jouée.
+
+```powershell
+rigged-matchup collect-api --tags-file seeds.txt --requests-per-second 75 --workers 22 --max-battles 50000000 --api-token-mode both --no-progress --stats-interval 10
+```
+
+Le seul vrai critère est le **volume post-sortie** : il faut assez de combats depuis la
+sortie de la carte pour qu'elle tombe dans la période d'entraînement (voir ci-dessous).
+Quelques jours de collecte à plein régime suffisent largement.
+
+### 3. Faire entrer la carte dans le split `train`
+
+C'est le piège principal. Le découpage est **chronologique** 70/15/15 : avec un corpus qui
+couvre un an, tous les combats d'une carte sortie il y a trois semaines tombent dans
+`validation`/`test`. Le modèle ne l'entraîne jamais — il ne fait que se faire évaluer
+dessus.
+
+Deux garde-fous ont été ajoutés à `prepare` :
+
+- `data.max_history_days` : fenêtre glissante en jours avant le combat le plus récent. Les
+  combats plus vieux sont écartés, ce qui avance la coupure `train` jusqu'à englober la
+  nouvelle carte. `null` = tout l'historique (comportement d'origine) ;
+- `data.seed_card_vocabulary` (défaut `true`) : chaque carte de la table statique reçoit sa
+  propre ligne d'embedding même absente de `train`. Sans ça elle était encodée sur
+  l'index `0`, c'est-à-dire confondue avec une **position vide de deck**.
+
+Le manifeste `data/prepared/manifest.json` expose maintenant `cards_absent_from_train`,
+`seeded_card_ids`, `dropped_before_history_window` et `max_history_days`. Si l'id de la
+nouvelle carte apparaît dans `cards_absent_from_train`, elle n'a aucun embedding appris :
+collecte plus de combats ou réduis `max_history_days`, puis relance `prepare --overwrite`.
+
+Ordre de grandeur : pour que la carte soit dans les 70 % les plus anciens, il faut que les
+combats postérieurs à sa sortie représentent plus de 30 % du corpus. Avec 4 M de vieux
+combats, `max_history_days: 60` est plus efficace que de collecter 2 M de combats de plus.
+
+### 4. Réentraîner
+
+```powershell
+rigged-matchup prepare --overwrite
+rigged-matchup pretrain-cards
+rigged-matchup train
+rigged-matchup evaluate artifacts/matchup-model.pt
+```
+
+Vérifie ensuite que la carte est réellement apprise :
+
+```powershell
+rigged-matchup benchmark artifacts/matchup-model.pt --split test --min-support 100
+```
+
+et regarde `data/prepared/card_frequencies.json` : une fréquence nulle ou de quelques
+centaines pour la nouvelle carte signifie que sa prédiction repose encore surtout sur ses
+métadonnées, pas sur des résultats observés.
+
 ## Brancher la matrice existante
 
 Sans branchement, `matrix_prior=0.5` et le réseau apprend uniquement sur les cartes et les

@@ -68,6 +68,7 @@ def test_supplemental_metadata_covers_recent_vocab_cards() -> None:
         26000101: "Rune Giant",
         26000102: "Berserker",
         26000103: "Boss Bandit",
+        26000106: "Ronin",
         28000023: "Void",
         28000024: "Goblin Curse",
         28000025: "Spirit Empress",
@@ -80,6 +81,23 @@ def test_supplemental_metadata_covers_recent_vocab_cards() -> None:
         assert metadata["role"] in CARD_METADATA_ROLES
         assert metadata["numeric"]["elixir"] > 0
         assert elixir_for(card_id) > 0
+
+
+def test_ronin_carries_the_reflect_flag() -> None:
+    # Parry is what defines Ronin's matchups: he beats melee and loses to ranged
+    # / air / swarm. No other flag expresses it, so it must survive the snapshot.
+    ronin = metadata_for(26000106)
+    assert ronin["name"] == "Ronin"
+    assert ronin["type"] == "troop"
+    assert ronin["role"] == "dps"
+    assert {"reflect", "high_dps"} <= ronin["tags"]
+    assert "champion" not in ronin["tags"]
+    assert elixir_for(26000106) == 5
+
+    from rigged_matchup_ml.card_stats import CARD_METADATA_VECTOR_FIELDS as fields
+    idx = {name: i for i, name in enumerate(fields)}
+    assert metadata_vector_for(26000106)[idx["tag:reflect"]] == 1.0
+    assert metadata_vector_for(26000000)[idx["tag:reflect"]] == 0.0
 
 
 def test_champion_flag_matches_champion_ids() -> None:

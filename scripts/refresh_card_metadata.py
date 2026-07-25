@@ -80,6 +80,9 @@ NUDGES: dict[int, dict[str, int]] = {
     # tier-5 damage, separated by per-hit punch (Sparky / Rocket on top).
     26000018: {"damage": -2},                  # Mini P.E.K.K.A
     26000006: {"damage": -2},                  # Balloon
+    # Ronin sits between Knight and Prince: 337 dmg / 1.4s = ~241 dps, so a notch
+    # under Prince (392 dmg, ~280 dps) which anchors tier 4.
+    26000106: {"damage": -1, "dps": -1},       # Ronin
     # tier-5 range, separated by reach (X-Bow / Mortar / Princess longest).
     26000040: {"range": -1},                   # Dart Goblin
     26000064: {"range": -1},                   # Firecracker
@@ -185,6 +188,10 @@ CARD_TABLE: dict[int, tuple[str, str, tuple[str, ...], int, int, int, int, int]]
     26000101: ("troop", "win_condition", ("building_target",), 4, 2, 2, 2, 3),            # Rune Giant
     26000102: ("troop", "dps", ("high_dps",), 2, 2, 4, 3, 1),                             # Berserker
     26000103: ("troop", "dps", ("high_dps", "champion"), 4, 4, 5, 4, 1),                  # Boss Bandit
+    # Ronin (Season 85, July 2026): 5 elixir Legendary ground melee troop.
+    # ~1779 hp (Knight-class body), 337 dmg @1.4s hit speed, Fast. "Parry":
+    # blocks one ground melee hit every 3.5s and reflects ~double back.
+    26000106: ("troop", "dps", ("high_dps", "reflect"), 3, 4, 4, 3, 1),                   # Ronin
     28000016: ("troop", "swarm", (), 1, 1, 1, 4, 2),                                      # Heal Spirit
     28000025: ("troop", "support", ("splash", "air_target"), 2, 3, 3, 2, 4),              # Spirit Empress
     # --- Buildings --------------------------------------------------------
@@ -252,7 +259,7 @@ CARD_NAMES: dict[int, str] = {
     26000084: "Electro Spirit", 26000085: "Electro Giant", 26000086: "Raging Prince", 26000087: "Phoenix",
     26000093: "Little Prince", 26000095: "Goblin Demolisher", 26000096: "Goblin Machine",
     26000097: "Suspicious Bush", 26000099: "Goblinstein", 26000101: "Rune Giant", 26000102: "Berserker",
-    26000103: "Boss Bandit",
+    26000103: "Boss Bandit", 26000106: "Ronin",
     27000000: "Cannon", 27000001: "Goblin Hut", 27000002: "Mortar", 27000003: "Inferno Tower",
     27000004: "Bomb Tower", 27000005: "Barbarian Hut", 27000006: "Tesla", 27000007: "Elixir Collector",
     27000008: "X-Bow", 27000009: "Tombstone", 27000010: "Furnace", 27000012: "Goblin Cage",

@@ -11,6 +11,15 @@ data:
   validation_fraction: 0.15
   require_exactly_eight_cards: true
   allowed_modes: [ladder, ranked]
+  # Rolling history window (days before the most recent battle). The split is
+  # chronological, so with a corpus spanning years a card released last month
+  # only ever lands in validation/test and is never trained on. Trimming the
+  # oldest battles pulls the train cutoff forward so a new card (Ronin, 26000106)
+  # sits inside the train period. null = keep the whole history.
+  max_history_days: null
+  # Give every card of the static table an embedding row even when it is absent
+  # from the train split, instead of collapsing it onto the padding index 0.
+  seed_card_vocabulary: true
   # Leave null to avoid treating raw API levels as comparable across rarities.
   max_raw_average_level_difference: null
   # 14000 splits the seasonal trophy road (voie saisonnière) so the huge old
