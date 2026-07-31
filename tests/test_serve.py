@@ -254,8 +254,101 @@ def test_predict_includes_model_interactions_when_requested(client) -> None:
         assert hit["target_card_id"] in team
         assert hit["source_card_id"] != hit["target_card_id"]
 
-    # Strongest pair is peak-normalised to 1.0.
-    assert max(hit["weight"] for hit in interactions["answers"]) == pytest.approx(1.0)
+    # Weights are normalised against the peak attention over ALL pairs, so they
+    # land in (0, 1]. They do not have to reach 1.0: selection ranks by signed
+    # ablation contribution and reserves a slot per opposing win condition, so
+    # the pair holding the attention peak is not necessarily among those returned.
+    weights = [hit["weight"] for hit in interactions["answers"]]
+    assert all(0.0 < weight <= 1.0 for weight in weights)
+    # Ablation gives every returned pair a signed effect on the team logit.
+    assert all(hit["contribution"] is not None for hit in interactions["answers"])
+
+
+# --- batch endpoint -----------------------------------------------------------
+
+
+def _rotated_payload(shift: int) -> dict:
+    """A distinct but valid payload: rotate the opponent deck so rows differ."""
+    opponent = WEB_PAYLOAD["opponent_card_ids"]
+    return {
+        **WEB_PAYLOAD,
+        "opponent_card_ids": opponent[shift:] + opponent[:shift],
+        "opponent_evolution_card_ids": [],
+    }
+
+
+def test_predict_batch_matches_single_predict(client) -> None:
+    payloads = [_rotated_payload(shift) for shift in range(4)]
+    batch = client.post("/predict/batch", json={"requests": payloads})
+    assert batch.status_code == 200
+    predictions = batch.json()["predictions"]
+    assert len(predictions) == len(payloads)
+
+    for payload, prediction in zip(payloads, predictions, strict=True):
+        single = client.post("/predict", json=payload).json()
+        # The batched pass must be numerically identical to the single-row path,
+        # not merely close: the site mixes both and caches the results.
+        assert prediction["win_probability"] == pytest.approx(
+            single["win_probability"], abs=1e-6
+        )
+        assert prediction["matchup_label"] == single["matchup_label"]
+        assert prediction["confidence"] == single["confidence"]
+        assert prediction["model_version"] == single["model_version"]
+        assert prediction["explanation"]["segment"] == single["explanation"]["segment"]
+
+
+def test_predict_batch_preserves_request_order(client) -> None:
+    # Segments differ per row, so a reordered response would show up here: the
+    # site indexes predictions positionally back into its own job list.
+    payloads = [
+        {**WEB_PAYLOAD, "team_trophies": 5500},
+        {**WEB_PAYLOAD, "team_trophies": 10000},
+        {**WEB_PAYLOAD, "mode_key": "ranked", "league_number": 3},
+    ]
+    predictions = client.post("/predict/batch", json={"requests": payloads}).json()[
+        "predictions"
+    ]
+    segments = [prediction["explanation"]["segment"] for prediction in predictions]
+    assert segments == ["ladder:5000-6999", "ladder:9000-11999", "ranked:unknown"]
+
+
+def test_predict_batch_routes_interaction_requests_to_the_single_path(client) -> None:
+    payloads = [
+        _rotated_payload(1),
+        {**WEB_PAYLOAD, "include_interactions": True},
+        _rotated_payload(2),
+    ]
+    predictions = client.post("/predict/batch", json={"requests": payloads}).json()[
+        "predictions"
+    ]
+    assert len(predictions) == 3
+    # Only the opted-in row carries attributions, and it stays in position 1.
+    assert predictions[0]["card_interactions"] is None
+    assert predictions[1]["card_interactions"] is not None
+    assert predictions[2]["card_interactions"] is None
+
+
+def test_predict_batch_stays_antisymmetric(client) -> None:
+    swapped_payload = {
+        **WEB_PAYLOAD,
+        "team_card_ids": WEB_PAYLOAD["opponent_card_ids"],
+        "opponent_card_ids": WEB_PAYLOAD["team_card_ids"],
+        "team_evolution_card_ids": WEB_PAYLOAD["opponent_evolution_card_ids"],
+        "opponent_evolution_card_ids": WEB_PAYLOAD["team_evolution_card_ids"],
+    }
+    predictions = client.post(
+        "/predict/batch", json={"requests": [WEB_PAYLOAD, swapped_payload]}
+    ).json()["predictions"]
+    assert predictions[0]["win_probability"] + predictions[1][
+        "win_probability"
+    ] == pytest.approx(1.0, abs=1e-3)
+
+
+def test_predict_batch_rejects_empty_and_oversized(client) -> None:
+    # 512 is the cap the site's META_BATCH_SIZE is tuned against; keep them in step.
+    assert client.post("/predict/batch", json={"requests": []}).status_code == 422
+    oversized = {"requests": [WEB_PAYLOAD] * 513}
+    assert client.post("/predict/batch", json=oversized).status_code == 422
 
 
 def test_real_checkpoint_loads_if_compatible() -> None:
