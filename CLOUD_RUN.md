@@ -18,15 +18,43 @@ gcloud run deploy rigged-matchup \
   --source . \
   --region europe-west1 \
   --port 8080 \
-  --cpu 1 --memory 512Mi \
-  --min-instances 1 \
+  --cpu 4 --memory 2Gi \
+  --concurrency 80 \
+  --max-instances 20 \
+  --cpu-boost \
   --allow-unauthenticated \
-  --set-env-vars MODEL_NAME=symmetric-matchup \
+  --set-env-vars MODEL_NAME=symmetric-matchup,OMP_NUM_THREADS=1,MKL_NUM_THREADS=1 \
   --set-secrets PREDICT_API_KEY=rigged-matchup-key:latest
 ```
 
 Notes:
 - **`--port 8080`**: Cloud Run sets `$PORT`; the shell-form `CMD` binds it.
+- **`OMP_NUM_THREADS=1`**: one BLAS thread per request. Measured against this
+  service, comparing idle tagged revisions of the same image so that live site
+  traffic could not skew the result:
+
+  | threads | rows/s (batch 512, 4 concurrent) | server-side p50 |
+  | --- | --- | --- |
+  | uncapped | 651 | 2788 ms |
+  | **1** | **790** | **2149 ms** |
+  | 2 | 658 | — |
+  | 4 | 598 | 3130 ms |
+
+  Throughput here comes from serving requests *concurrently*, not from splitting
+  one request across cores. Beware measuring this against the revision that is
+  serving production: an early run showed a bogus 8.5x purely because the
+  baseline was handling real traffic while the candidate sat idle.
+- **`--concurrency 80` (the default) is right**, not a low value: with one thread
+  per request, a single batch occupies roughly one of the four vCPUs, so the
+  instance needs several requests in flight to be used at all. Measured scaling
+  on one instance: 1 batch = 352 rows/s, 2 = 651, 4 = 971, 8 = 1717. The caller's
+  `META_BATCH_CONCURRENCY` in `ml-inference.ts` is what actually sets this.
+- **`--cpu-boost`**: extra CPU during container start, which is where the
+  checkpoint load and torch import dominate.
+- **Traffic pinning**: `gcloud run deploy`/`update` with `--no-traffic` takes the
+  service off "serve LATEST" and pins it to a named revision. Later deploys then
+  create revisions that silently receive nothing. Restore with
+  `gcloud run services update-traffic rigged-matchup --to-latest`.
 - **`--min-instances 1`**: keeps one instance warm. Without it the first request
   after idle pays a cold start (container boot + checkpoint load). The site also
   warms the service via `/health` before its prediction fan-out

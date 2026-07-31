@@ -1,8 +1,9 @@
 """FastAPI inference server for the antisymmetric matchup model.
 
 Serves the trained PyTorch ``SymmetricMatchupModel`` over the exact HTTP
-contract the Rigged Royale site already speaks (``POST /predict``, see
-``riggedroyale/src/lib/ml-inference.ts``). The site sends a thin request
+contract the Rigged Royale site speaks (``POST /predict`` and vectorised
+``POST /predict/batch``, see ``riggedroyale/src/lib/ml-inference.ts``). The
+site sends a thin request
 (decks, mode, towers, average levels, evolved-card ids); this module adapts it
 into the rich row :func:`encode_row` expects, fills the fields the site does not
 send with safe defaults, and maps the model output back to the site's
@@ -23,7 +24,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from .card_stats import CHAMPION_CARD_IDS
 from .domain import ROLE_CHAMPION, ROLE_HERO, ROLE_NORMAL, Deck, segment_for
-from .predictor import load_bundle, predict_from_row
+from .predictor import load_bundle, predict_from_row, predict_from_rows
 
 DEFAULT_CHECKPOINT = "artifacts/matchup-model.pt"
 DEFAULT_MODEL_NAME = "symmetric-matchup"
@@ -66,8 +67,8 @@ class MatchupRequest(BaseModel):
     opponent_hero_card_ids: list[int] = Field(default_factory=list)
     # Per-card counter / synergy attributions are only needed for the headline
     # matchup of each battle, not the expected-context or meta-panel requests, so
-    # the caller opts in to avoid the extra attention pass on the high-fan-out
-    # requests.
+    # the caller opts in to avoid the extra attribution/ablation passes on the
+    # high-fan-out requests.
     include_interactions: bool = False
 
     @field_validator("team_card_ids", "opponent_card_ids")
@@ -82,6 +83,9 @@ class CardInteraction(BaseModel):
     source_card_id: int
     target_card_id: int
     weight: float
+    # Signed raw-logit effect from leave-one-pair-out ablation. Positive favors
+    # the requested team; negative favors the opponent.
+    contribution: float | None = None
 
 
 class CardInteractions(BaseModel):
@@ -97,10 +101,18 @@ class PredictionResponse(BaseModel):
     model_name: str | None
     model_version: str | None
     explanation: dict
-    # Model-derived, never a hardcoded table; absent when the request did not opt
-    # in or the checkpoint has no interaction terms.
+    # Model-derived attention plus signed ablation; absent when the request did not
+    # opt in or the checkpoint has no interaction terms.
     card_interactions: CardInteractions | None = None
     synergies: list[CardInteraction] | None = None
+
+
+class BatchMatchupRequest(BaseModel):
+    requests: list[MatchupRequest] = Field(..., min_length=1, max_length=512)
+
+
+class BatchPredictionResponse(BaseModel):
+    predictions: list[PredictionResponse]
 
 
 # --- output mapping (ported from the obsolete sklearn container) ---------------
@@ -254,18 +266,17 @@ def request_to_row(request: MatchupRequest, bundle: dict[str, Any]) -> dict[str,
     }
 
 
-def build_response(bundle: dict[str, Any], request: MatchupRequest) -> PredictionResponse:
-    row = request_to_row(request, bundle)
-    result = predict_from_row(
-        bundle, row, include_interactions=request.include_interactions
-    )
+def response_from_result(
+    bundle: dict[str, Any],
+    request: MatchupRequest,
+    result: dict[str, Any],
+) -> PredictionResponse:
     probability = max(0.0, min(1.0, float(result["team_win_probability"])))
     has_context = (
         request.team_avg_card_level is not None
         and request.opponent_avg_card_level is not None
     )
-    feature_version = bundle.get("feature_version")
-    model_version = f"v{feature_version}" if feature_version is not None else None
+    model_version = bundle.get("resolved_model_version")
 
     interactions = result.get("interactions")
     card_interactions: CardInteractions | None = None
@@ -297,6 +308,46 @@ def build_response(bundle: dict[str, Any], request: MatchupRequest) -> Predictio
     )
 
 
+def build_response(bundle: dict[str, Any], request: MatchupRequest) -> PredictionResponse:
+    row = request_to_row(request, bundle)
+    result = predict_from_row(
+        bundle, row, include_interactions=request.include_interactions
+    )
+    return response_from_result(bundle, request, result)
+
+
+def build_batch_response(
+    bundle: dict[str, Any], payload: BatchMatchupRequest
+) -> BatchPredictionResponse:
+    """Vectorise regular predictions; preserve opt-in interaction semantics."""
+    rows = [request_to_row(item, bundle) for item in payload.requests]
+    results: list[dict[str, Any] | None] = [None] * len(rows)
+    regular_indices = [
+        index
+        for index, item in enumerate(payload.requests)
+        if not item.include_interactions
+    ]
+    regular_results = predict_from_rows(
+        bundle, [rows[index] for index in regular_indices]
+    )
+    for index, result in zip(regular_indices, regular_results, strict=True):
+        results[index] = result
+
+    for index, item in enumerate(payload.requests):
+        if item.include_interactions:
+            results[index] = predict_from_row(
+                bundle, rows[index], include_interactions=True
+            )
+
+    return BatchPredictionResponse(
+        predictions=[
+            response_from_result(bundle, request, result)
+            for request, result in zip(payload.requests, results, strict=True)
+            if result is not None
+        ]
+    )
+
+
 # --- app ----------------------------------------------------------------------
 
 
@@ -322,11 +373,10 @@ def require_api_key(x_api_key: str | None = Header(default=None)) -> None:
 @app.get("/health")
 def health(request: Request) -> dict[str, Any]:
     bundle = getattr(request.app.state, "bundle", None)
-    feature_version = bundle.get("feature_version") if bundle else None
     return {
         "ok": bundle is not None,
         "model_name": os.getenv("MODEL_NAME", DEFAULT_MODEL_NAME),
-        "model_version": f"v{feature_version}" if feature_version is not None else None,
+        "model_version": bundle.get("resolved_model_version") if bundle else None,
     }
 
 
@@ -336,3 +386,17 @@ def predict(request: Request, payload: MatchupRequest) -> PredictionResponse:
     if bundle is None:  # pragma: no cover - lifespan always loads it
         raise HTTPException(status_code=503, detail="Model not loaded")
     return build_response(bundle, payload)
+
+
+@app.post(
+    "/predict/batch",
+    response_model=BatchPredictionResponse,
+    dependencies=[Depends(require_api_key)],
+)
+def predict_batch(
+    request: Request, payload: BatchMatchupRequest
+) -> BatchPredictionResponse:
+    bundle = getattr(request.app.state, "bundle", None)
+    if bundle is None:  # pragma: no cover - lifespan always loads it
+        raise HTTPException(status_code=503, detail="Model not loaded")
+    return build_batch_response(bundle, payload)
