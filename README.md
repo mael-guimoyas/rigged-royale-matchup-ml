@@ -136,6 +136,32 @@ rigged-matchup collect-api --from-supabase 500 --upload --max-battles 200000
 rigged-matchup collect-api --tags-file tags.txt --max-players 50
 ```
 
+**Fraîcheur des combats.** Par défaut, seuls les combats des **2 derniers jours** sont
+gardés (`data.collect_max_age_days` dans `config/default.yaml`, surchargeable avec
+`--max-age-days`). Un battlelog contient les ~25 derniers matchs du joueur, qui peuvent
+dater de plusieurs semaines pour un compte inactif : sans cette fenêtre, un réentraînement
+« nouvelle meta » se retrouve dilué par des parties jouées sous l'équilibrage précédent.
+Un combat sans `battleTime` exploitable est traité comme périmé (impossible de prouver
+qu'il est récent, et il serait daté à `now()` par le split chronologique). Les adversaires
+découverts uniquement dans un combat périmé ne sont pas mis en file : le joueur est
+inactif, son propre battlelog serait tout aussi vieux.
+
+```powershell
+# Réentraînement complet après un patch d'équilibrage : uniquement du 2 jours max.
+rigged-matchup collect-api --tags-file seeds.txt --max-age-days 2 --requests-per-second 75 --workers 22 --api-token-mode both --no-progress --stats-interval 10
+
+# Fenêtre plus large (une semaine), ou aucun filtre d'âge.
+rigged-matchup collect-api --tags-file seeds.txt --max-age-days 7
+rigged-matchup collect-api --tags-file seeds.txt --max-age-days 0
+```
+
+Le résumé JSON de fin de run expose `battles_skipped_stale` et `max_age_days` ; en
+`--no-progress`, la ligne de stats affiche aussi `stale=`.
+
+Attention : la fenêtre s'applique **à la collecte**, pas aux shards déjà sur le disque.
+Pour un corpus 100 % nouvelle meta, collecte dans un `data/raw` vide (ou déplace les
+anciens shards ailleurs) — sinon `prepare` mélangera l'ancien et le neuf.
+
 Il faut une amorce : `--from-supabase N` (tags depuis `public.players`) ou `--tags-file`.
 Chaque battlelog fournit l'adversaire ; `--snowball` (par défaut) met ces tags en file
 pour élargir la couverture. La `leagueNumber` vient du profil du joueur (`/players/{tag}`),
@@ -382,8 +408,9 @@ la dimension d'entrée du modèle. Les checkpoints antérieurs ne se chargent pl
 
 ### 2. Récupérer des combats contenant la carte
 
-Rien de spécifique côté collecte : `collect-api` prend tous les combats des joueurs
-crawlés, donc la nouvelle carte arrive dès qu'elle est jouée.
+Rien de spécifique côté collecte : `collect-api` prend tous les combats récents des
+joueurs crawlés (fenêtre `--max-age-days`, 2 jours par défaut), donc la nouvelle carte
+arrive dès qu'elle est jouée.
 
 ```powershell
 rigged-matchup collect-api --tags-file seeds.txt --requests-per-second 75 --workers 22 --max-battles 50000000 --api-token-mode both --no-progress --stats-interval 10

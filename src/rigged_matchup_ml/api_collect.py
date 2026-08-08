@@ -7,6 +7,10 @@ Supabase extractor, and writes training-ready Parquet shards locally and/or to
 Supabase Storage. Opponents discovered in each battlelog are snowballed back
 into the queue, so a small seed of tags expands into broad coverage.
 
+Battles older than `data.collect_max_age_days` (default 2, override with
+`--max-age-days`) are dropped: a retrain on a fresh meta must not be diluted by
+games played under the previous balance patch.
+
 Storage is object storage, not SQL: the shards here are consumed in bulk by
 `prepare`/training, not queried per row. That is exactly what the model needs.
 """
@@ -25,8 +29,9 @@ import urllib.parse
 import urllib.request
 from collections import Counter, deque
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, as_completed, wait
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
+from http.client import HTTPException
 from pathlib import Path
 from typing import Any
 
@@ -130,6 +135,41 @@ def league_from_profile(profile: dict[str, Any] | None) -> int | None:
         if isinstance(league, int) and league > 0:
             return league
     return None
+
+
+def _battle_time(battle: dict[str, Any]) -> datetime | None:
+    """Parse the API `battleTime` ("20260601T120000.000Z"); None when unusable.
+
+    Kept separate from `domain._as_datetime`, which falls back to *now* for a
+    missing/garbled value -- exactly the wrong default here, since it would make
+    an undatable battle look brand new and slip past the freshness window.
+    """
+    raw = battle.get("battleTime")
+    if not raw:
+        return None
+    text = str(raw)
+    try:
+        return datetime.strptime(text, "%Y%m%dT%H%M%S.%fZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        pass
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _is_fresh(battle: dict[str, Any], cutoff: datetime | None) -> bool:
+    """Whether `battle` happened at or after `cutoff` (no cutoff = always true).
+
+    An unparseable timestamp counts as stale: we cannot prove it is recent, and
+    letting it through would both pollute a meta-fresh corpus and land at
+    `now()` in the chronological train/val/test split.
+    """
+    if cutoff is None:
+        return True
+    when = _battle_time(battle)
+    return when is not None and when >= cutoff
 
 
 def _battle_fingerprint(player_tag: str, battle: dict[str, Any]) -> str:
@@ -408,7 +448,15 @@ class ClashRoyaleClient:
                     continue
                 self._bump("errors", token_name)
                 raise
-            except (urllib.error.URLError, TimeoutError):
+            except (OSError, HTTPException):
+                # Every transport-level failure, not just URLError/TimeoutError.
+                # The proxy closes connections mid-flight under sustained load,
+                # which surfaces as http.client.RemoteDisconnected -- a
+                # ConnectionResetError/BadStatusLine, subclass of neither of the
+                # two we used to catch. It escaped _get, escaped _fetch_player,
+                # and killed the whole crawl from the executor loop. OSError
+                # covers URLError/TimeoutError/ConnectionError; HTTPException
+                # covers the malformed-response family.
                 if attempt < self._max_retries - 1:
                     time.sleep(2.0 * (attempt + 1))
                     continue
@@ -659,27 +707,47 @@ def _fetch_player(
     allowed_modes: set[str],
     snowball: bool,
     min_trophies: int,
-) -> tuple[list[dict[str, Any]], list[tuple[str, str, int | None]], int]:
+    max_age_days: float | None = None,
+) -> tuple[list[dict[str, Any]], list[tuple[str, str, int | None]], int, int]:
     """Network worker: battlelog first, profile only if a ranked battle exists.
 
     Skipping the profile fetch for ladder-only players roughly halves the request
-    count. Returns parsed records (sub-`min_trophies` ladder dropped), snowball
-    candidates with their discovery trophies, and battles seen. No dedup or file
-    writes happen here so it is safe to run on many threads.
+    count. Returns parsed records (sub-`min_trophies` ladder and battles older
+    than `max_age_days` dropped), snowball candidates with their discovery
+    trophies, battles seen, and battles dropped as stale. No dedup or file writes
+    happen here so it is safe to run on many threads.
+
+    The freshness cutoff is recomputed per player rather than fixed at run start,
+    so a multi-hour crawl keeps a true rolling window instead of slowly drifting
+    to `max_age_days + run duration`.
     """
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(days=max_age_days)
+        if max_age_days is not None and max_age_days > 0
+        else None
+    )
     try:
         battles = client.battlelog(tag)
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError):
-        return [], [], 0
+    except (OSError, HTTPException, ValueError):
+        # Losing one player is fine; losing the run is not. ValueError covers
+        # json.JSONDecodeError on a truncated body.
+        return [], [], 0, 0
     league: int | None = None
     if any(mode_key_for(battle) == "ranked" for battle in battles):
         try:
             league = league_from_profile(client.player(tag))
-        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError):
+        except (OSError, HTTPException, ValueError):
             league = None
     records: list[dict[str, Any]] = []
     candidates: list[tuple[str, str, int | None]] = []
+    stale = 0
     for battle in battles:
+        if not _is_fresh(battle, cutoff):
+            # Snowball is skipped too, on purpose: an opponent met only in a
+            # stale battle is an inactive player whose own log would be just as
+            # stale, so queueing them burns requests for zero accepted rows.
+            stale += 1
+            continue
         if snowball:
             candidates.extend(_opponent_candidates(battle))
         mode_key = mode_key_for(battle)
@@ -696,7 +764,7 @@ def _fetch_player(
         parsed = parse_battle_row(row, data_config)
         if parsed is not None and _segment_tracked(parsed["segment"], min_trophies):
             records.append(parsed)
-    return records, candidates, len(battles)
+    return records, candidates, len(battles), stale
 
 
 def collect_from_api(
@@ -714,6 +782,7 @@ def collect_from_api(
     shard_size: int = 50_000,
     max_queue: int | None = None,
     min_trophies: int | None = None,
+    max_age_days: float | None = None,
     balance: bool = True,
     api_token_mode: str = "1",
     show_progress: bool = True,
@@ -744,6 +813,12 @@ def collect_from_api(
     trophy_buckets = [int(edge) for edge in config.data["trophy_buckets"]]
     if min_trophies is None:
         min_trophies = int(config.data.get("collect_min_trophies", 5000))
+    # Freshness window: a full retrain on a new meta must not be diluted by
+    # battles played under the previous balance. <= 0 disables the filter.
+    if max_age_days is None:
+        max_age_days = float(config.data.get("collect_max_age_days", 2))
+    if max_age_days <= 0:
+        max_age_days = None
     # Baseline = where battles already are, so balance fills the gaps on disk and
     # a restart resumes the starved bands instead of re-piling onto the core.
     baseline_counts = (
@@ -766,7 +841,10 @@ def collect_from_api(
         "uploaded": 0,
         "seed_tags": len(seeds),
         "candidates_skipped_low": 0,
+        "battles_skipped_stale": 0,
+        "fetch_failures": 0,
         "min_trophies": min_trophies,
+        "max_age_days": max_age_days,
         "balance": balance,
         "api_token_mode": api_token_mode,
         "api_token_envs": client.token_names,
@@ -777,6 +855,7 @@ def collect_from_api(
         "max_queue": max_queued,
     }
     run_by_segment: Counter[str] = Counter()
+    failure_kinds: Counter[str] = Counter()
     progress = tqdm(desc="CR API players", unit="player", disable=not show_progress)
     if show_progress and balance and baseline_counts:
         top = ", ".join(
@@ -843,6 +922,7 @@ def collect_from_api(
             f"req/s={recent_rps:.2f} "
             f"avg_req/s={total_rps:.2f} "
             f"accepted={summary['battles_accepted']:,} "
+            f"stale={summary['battles_skipped_stale']:,} "
             f"queued={frontier.queue_size():,} "
             f"429={client.rate_limited:,}",
             file=sys.stderr,
@@ -870,6 +950,7 @@ def collect_from_api(
                         allowed_modes,
                         snowball,
                         min_trophies,
+                        max_age_days,
                     )
                     inflight[future] = tag
                     submitted += 1
@@ -879,9 +960,18 @@ def collect_from_api(
                 done, _ = wait(list(inflight), return_when=FIRST_COMPLETED)
                 for future in done:
                     inflight.pop(future)
-                    records, candidates, seen = future.result()
+                    try:
+                        records, candidates, seen, stale = future.result()
+                    except Exception as error:  # noqa: BLE001 - never kill the crawl
+                        # Last line of defence: whatever a worker failed on, the
+                        # other 15 threads and the accumulated buffer must
+                        # survive it. Count it, drop that player, keep crawling.
+                        summary["fetch_failures"] += 1
+                        failure_kinds[type(error).__name__] += 1
+                        continue
                     summary["players_processed"] += 1
                     summary["battles_seen"] += seen
+                    summary["battles_skipped_stale"] += stale
                     accepted = deduplicator.keep_new(records)
                     summary["battles_accepted"] += len(accepted)
                     buffer.extend(accepted)
@@ -900,8 +990,15 @@ def collect_from_api(
                         )
                     maybe_emit_status()
                 fill()
-        flush()
     finally:
+        # Flush here, not on the happy path only: an unexpected exit (crash,
+        # Ctrl-C, kill) used to drop the whole sub-shard buffer while the dedup
+        # DB had already recorded those fingerprints as seen -- so they were
+        # gone for good, never recollected on restart.
+        try:
+            flush()
+        except Exception:  # noqa: BLE001 - a failed final write must not mask the original error
+            pass
         progress.close()
         deduplicator.close()
 
@@ -913,4 +1010,5 @@ def collect_from_api(
     summary["bucket"] = bucket if upload else None
     summary["raw_dir"] = str(raw_dir)
     summary["accepted_by_segment"] = dict(run_by_segment)
+    summary["fetch_failure_kinds"] = dict(failure_kinds)
     return summary

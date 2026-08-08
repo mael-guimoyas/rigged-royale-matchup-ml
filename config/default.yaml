@@ -29,6 +29,10 @@ data:
   # collect-api drops ladder battles/opponents below this trophy count: we don't
   # train on sub-5000 ladder, and queueing them only bloats the crawl frontier.
   collect_min_trophies: 5000
+  # collect-api drops battles played more than this many days ago. The battlelog
+  # of an inactive player is mostly pre-patch games; keeping them would blend two
+  # metas in the same training corpus. 0 disables the filter.
+  collect_max_age_days: 2
   # Optional dotted callable: "my_package.my_prior:predict".
   # It receives the parsed record and returns P(team wins) from your matrix.
   matrix_prior_provider: null

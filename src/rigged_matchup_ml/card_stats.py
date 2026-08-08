@@ -102,12 +102,22 @@ CARD_METADATA_FLAGS: tuple[str, ...] = (
     "spawner",
     "building_target",
     "champion",
+    # RETIRED UNTIL THE NEXT TRAINING RUN -- do not re-add without retraining.
+    #
     # Passive damage reflection / parry: the card periodically blocks an incoming
     # melee hit and sends it back. It flips the whole melee side of a matchup
     # (Ronin beats P.E.K.K.A / Mega Knight / Prince 1v1) while doing nothing
     # against ranged, air or swarm -- exactly the structure the model has to
     # learn, and it is not expressible with the other flags.
-    "reflect",
+    #
+    # Every entry here widens the per-card metadata vector, and that width is
+    # baked into the trained checkpoint. Served checkpoints carry 45 features;
+    # keeping "reflect" made the encoder emit 46, so the checkpoint loaded fine
+    # and /health reported ok while every prediction died with "Card metadata
+    # width mismatch: got 46, expected 45". Ronin (26000106) still declares the
+    # tag in CARD_METADATA, so re-enabling it is a one-line revert once a 46-wide
+    # checkpoint ships.
+    # "reflect",
 )
 CARD_METADATA_TAGS: tuple[str, ...] = (*CARD_METADATA_ROLES, *CARD_METADATA_FLAGS)
 # Bucketed (ordinal) numerics in [0, 1]; coarse on purpose so balance changes do

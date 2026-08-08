@@ -1,4 +1,5 @@
 from collections import Counter
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -8,6 +9,9 @@ from rigged_matchup_ml.api_collect import (
     ClashRoyaleClient,
     RateLimiter,
     _battle_fingerprint,
+    _battle_time,
+    _fetch_player,
+    _is_fresh,
     _ladder_bucket_label,
     _normalize_baseline,
     _opponent_candidates,
@@ -20,16 +24,27 @@ from rigged_matchup_ml.api_collect import (
 from rigged_matchup_ml.domain import parse_battle_row
 
 BUCKETS = [0, 5000, 7000, 9000, 12000, 14000, 999999]
+DATA_CONFIG = {
+    "require_exactly_eight_cards": True,
+    "allowed_modes": ["ladder", "ranked"],
+    "max_raw_average_level_difference": None,
+    "trophy_buckets": BUCKETS,
+    "top_ladder_buckets": [100, 1000, 10000],
+}
 
 
 def _deck(start: int) -> list[dict]:
     return [{"id": start + i, "level": 14} for i in range(8)]
 
 
-def _battle(battle_type: str = "pathOfLegend") -> dict:
+def _api_time(when: datetime) -> str:
+    return when.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%S.000Z")
+
+
+def _battle(battle_type: str = "pathOfLegend", battle_time: str | None = None) -> dict:
     return {
         "type": battle_type,
-        "battleTime": "20260601T120000.000Z",
+        "battleTime": battle_time or "20260601T120000.000Z",
         "team": [{"tag": "#AAA", "crowns": 2, "cards": _deck(1000)}],
         "opponent": [{"tag": "#BBB", "crowns": 1, "cards": _deck(2000)}],
     }
@@ -181,6 +196,81 @@ def test_api_battle_parses_into_training_row() -> None:
     assert parsed["win"] is True
     assert len(parsed["team_card_ids"]) == 8
     assert parsed["mode_key"] == "ranked"
+
+
+def test_battle_time_parses_api_format_and_rejects_junk() -> None:
+    assert _battle_time({"battleTime": "20260601T120000.000Z"}) == datetime(
+        2026, 6, 1, 12, 0, tzinfo=timezone.utc
+    )
+    assert _battle_time({"battleTime": "2026-06-01T12:00:00Z"}) == datetime(
+        2026, 6, 1, 12, 0, tzinfo=timezone.utc
+    )
+    assert _battle_time({}) is None
+    assert _battle_time({"battleTime": "not-a-date"}) is None
+
+
+def test_is_fresh_keeps_recent_drops_old_and_undatable() -> None:
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=2)
+    assert _is_fresh({"battleTime": _api_time(now - timedelta(hours=6))}, cutoff) is True
+    assert _is_fresh({"battleTime": _api_time(now - timedelta(days=5))}, cutoff) is False
+    # No timestamp = cannot prove freshness = dropped (would otherwise be dated
+    # `now()` downstream and poison the chronological split).
+    assert _is_fresh({}, cutoff) is False
+    # No window configured: everything passes.
+    assert _is_fresh({"battleTime": "20200101T000000.000Z"}, None) is True
+
+
+class _StubClient:
+    """Minimal stand-in for ClashRoyaleClient in _fetch_player tests."""
+
+    def __init__(self, battles: list[dict]) -> None:
+        self._battles = battles
+
+    def battlelog(self, tag: str) -> list[dict]:
+        return self._battles
+
+    def player(self, tag: str) -> dict:
+        return {"currentPathOfLegendSeasonResult": {"leagueNumber": 7}}
+
+
+def test_fetch_player_keeps_only_battles_inside_the_age_window() -> None:
+    now = datetime.now(timezone.utc)
+    fresh = _battle(battle_time=_api_time(now - timedelta(hours=3)))
+    old = _battle(battle_time=_api_time(now - timedelta(days=9)))
+    old["opponent"][0]["tag"] = "#STALEOPP"
+
+    records, candidates, seen, stale = _fetch_player(
+        _StubClient([fresh, old]),
+        "#AAA",
+        DATA_CONFIG,
+        {"ladder", "ranked"},
+        snowball=True,
+        min_trophies=5000,
+        max_age_days=2,
+    )
+
+    assert seen == 2
+    assert stale == 1
+    assert len(records) == 1
+    # The stale battle contributes no snowball candidates either.
+    assert "#STALEOPP" not in {tag for tag, _mode, _trophies in candidates}
+
+
+def test_fetch_player_without_age_window_keeps_everything() -> None:
+    old = _battle(battle_time="20200101T000000.000Z")
+
+    records, _candidates, seen, stale = _fetch_player(
+        _StubClient([old]),
+        "#AAA",
+        DATA_CONFIG,
+        {"ladder", "ranked"},
+        snowball=True,
+        min_trophies=5000,
+        max_age_days=None,
+    )
+
+    assert (seen, stale, len(records)) == (1, 0, 1)
 
 
 def test_ladder_bucket_label_splits_seasonal_road() -> None:

@@ -83,21 +83,35 @@ def test_supplemental_metadata_covers_recent_vocab_cards() -> None:
         assert elixir_for(card_id) > 0
 
 
-def test_ronin_carries_the_reflect_flag() -> None:
-    # Parry is what defines Ronin's matchups: he beats melee and loses to ranged
-    # / air / swarm. No other flag expresses it, so it must survive the snapshot.
+def test_ronin_metadata_is_correct() -> None:
     ronin = metadata_for(26000106)
     assert ronin["name"] == "Ronin"
     assert ronin["type"] == "troop"
     assert ronin["role"] == "dps"
-    assert {"reflect", "high_dps"} <= ronin["tags"]
+    assert "high_dps" in ronin["tags"]
     assert "champion" not in ronin["tags"]
     assert elixir_for(26000106) == 5
 
+
+def test_reflect_flag_is_retired_until_the_next_training_run() -> None:
+    # Parry is what defines Ronin's matchups, but the flag is parked: it widened
+    # the metadata vector past what trained checkpoints expect. Re-enable it in
+    # CARD_METADATA_FLAGS only together with a checkpoint trained at the new
+    # width, and update the width guard below in the same commit.
     from rigged_matchup_ml.card_stats import CARD_METADATA_VECTOR_FIELDS as fields
-    idx = {name: i for i, name in enumerate(fields)}
-    assert metadata_vector_for(26000106)[idx["tag:reflect"]] == 1.0
-    assert metadata_vector_for(26000000)[idx["tag:reflect"]] == 0.0
+
+    assert "reflect" not in CARD_METADATA_FLAGS
+    assert "tag:reflect" not in fields
+
+
+def test_metadata_vector_width_matches_served_checkpoints() -> None:
+    # This width is baked into every trained checkpoint: the model sizes its
+    # metadata projection from the checkpoint's own model_config. Widening the
+    # tag list without retraining still loads, and /health still answers ok --
+    # then every prediction dies with "Card metadata width mismatch", so a broken
+    # rollout looks healthy. Change this number only alongside a new checkpoint.
+    assert CARD_METADATA_VECTOR_SIZE == 45
+    assert len(metadata_vector_for(26000106)) == CARD_METADATA_VECTOR_SIZE
 
 
 def test_champion_flag_matches_champion_ids() -> None:

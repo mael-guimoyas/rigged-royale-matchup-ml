@@ -82,6 +82,14 @@ def collect_api(
         help="Drop ladder battles/opponents below this trophy count (default from "
         "config collect_min_trophies, 5000). 'En dessous on s'en fout'.",
     ),
+    max_age_days: float | None = typer.Option(
+        None,
+        "--max-age-days",
+        help="Only keep battles played within the last N days (default from "
+        "config collect_max_age_days, 2). Use 0 to disable and take the whole "
+        "battlelog. Keep it tight after a balance patch so the corpus is pure "
+        "new-meta.",
+    ),
     balance: bool = typer.Option(
         True,
         "--balance/--no-balance",
@@ -131,6 +139,7 @@ def collect_api(
         prefix=prefix,
         max_queue=max_queue,
         min_trophies=min_trophies,
+        max_age_days=max_age_days,
         balance=balance,
         api_token_mode=api_token_mode,
         show_progress=progress,
