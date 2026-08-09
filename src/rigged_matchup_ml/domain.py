@@ -47,14 +47,32 @@ def _as_datetime(value: datetime | str | None) -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _card_role(card: dict[str, Any]) -> int:
+def _form_levels(card: dict[str, Any]) -> tuple[int, int]:
+    """Decode Supercell's equipped-form flags into Evo and Hero levels.
+
+    Battle-log ``evolutionLevel`` is a bit mask: bit 1 means Evolution and bit
+    2 means Hero. Older callers may still provide a separate ``heroLevel``
+    field, so keep it as a compatible fallback.
+    """
+    form_flags = max(0, int(card.get("evolutionLevel") or 0))
+    evolution_level = 1 if form_flags & 1 else 0
+    explicit_hero_level = max(
+        0, int(card.get("heroLevel") or card.get("hero_level") or 0)
+    )
+    hero_level = explicit_hero_level or (1 if form_flags & 2 else 0)
+    return evolution_level, hero_level
+
+
+def _card_role(card: dict[str, Any], hero_level: int | None = None) -> int:
     rarity = str(card.get("rarity", "")).lower()
     if rarity == "champion" or card.get("isChampion") is True:
         return ROLE_CHAMPION
+    if hero_level is None:
+        _, hero_level = _form_levels(card)
     if (
         rarity == "hero"
         or card.get("isHero") is True
-        or int(card.get("heroLevel") or card.get("hero_level") or 0) > 0
+        or hero_level > 0
     ):
         return ROLE_HERO
     return ROLE_NORMAL
@@ -68,14 +86,13 @@ def parse_deck(player: dict[str, Any]) -> Deck | None:
             card_id = int(raw_card["id"])
         except (KeyError, TypeError, ValueError):
             return None
+        evolution_level, hero_level = _form_levels(raw_card)
         cards.append(
             ParsedCard(
                 card_id=card_id,
-                evolution_level=max(0, int(raw_card.get("evolutionLevel") or 0)),
-                hero_level=max(
-                    0, int(raw_card.get("heroLevel") or raw_card.get("hero_level") or 0)
-                ),
-                role=_card_role(raw_card),
+                evolution_level=evolution_level,
+                hero_level=hero_level,
+                role=_card_role(raw_card, hero_level),
                 raw_level=int(raw_card["level"]) if raw_card.get("level") is not None else None,
             )
         )

@@ -18,6 +18,7 @@ Storage is object storage, not SQL: the shards here are consumed in bulk by
 from __future__ import annotations
 
 import json
+import math
 import os
 import random
 import shutil
@@ -52,6 +53,7 @@ USER_AGENT = "rigged-royale-matchup-ml/0.1 (+https://github.com/riggedroyale)"
 CR_API_TOKEN_ENVS = ("CR_API_TOKEN", "CR_API_TOKEN2")
 RANKED_BATTLE_TYPES = {"pathoflegend", "pathoflegends"}
 LADDER_BATTLE_TYPES = {"pvp"}
+DEFAULT_MAX_QUEUE = 100_000
 
 
 class RateLimiter:
@@ -70,6 +72,20 @@ class RateLimiter:
         delay = slot - time.perf_counter()
         if delay > 0:
             time.sleep(delay)
+
+
+def _effective_worker_count(workers: int | None, requests_per_second: float) -> int:
+    """Resolve explicit concurrency or size it to keep the rate limiter busy.
+
+    CR API responses commonly take around 0.8-1.0 seconds through the RoyaleAPI
+    proxy. A 75 req/s target therefore needs roughly 60-75 simultaneous sockets;
+    the old 16/22-worker recommendation could never reach that target even with
+    zero 429 responses. Extra workers are harmless because ``RateLimiter`` still
+    enforces the configured global request rate.
+    """
+    if workers is not None and workers > 0:
+        return workers
+    return min(256, max(16, math.ceil(max(requests_per_second, 0.1) * 1.1)))
 
 
 def _now_iso() -> str:
@@ -732,22 +748,22 @@ def _fetch_player(
         # Losing one player is fine; losing the run is not. ValueError covers
         # json.JSONDecodeError on a truncated body.
         return [], [], 0, 0
+    fresh_battles = [battle for battle in battles if _is_fresh(battle, cutoff)]
+    stale = len(battles) - len(fresh_battles)
+
     league: int | None = None
-    if any(mode_key_for(battle) == "ranked" for battle in battles):
+    # A stale ranked battle does not need a league: it will be discarded below.
+    # Likewise, skip the profile endpoint when ranked is excluded altogether.
+    # This removes one request for inactive and ladder-only players.
+    ranked_allowed = not allowed_modes or "ranked" in allowed_modes
+    if ranked_allowed and any(mode_key_for(battle) == "ranked" for battle in fresh_battles):
         try:
             league = league_from_profile(client.player(tag))
         except (OSError, HTTPException, ValueError):
             league = None
     records: list[dict[str, Any]] = []
     candidates: list[tuple[str, str, int | None]] = []
-    stale = 0
-    for battle in battles:
-        if not _is_fresh(battle, cutoff):
-            # Snowball is skipped too, on purpose: an opponent met only in a
-            # stale battle is an inactive player whose own log would be just as
-            # stale, so queueing them burns requests for zero accepted rows.
-            stale += 1
-            continue
+    for battle in fresh_battles:
         if snowball:
             candidates.extend(_opponent_candidates(battle))
         mode_key = mode_key_for(battle)
@@ -775,7 +791,7 @@ def collect_from_api(
     max_battles: int | None = None,
     max_players: int | None = None,
     requests_per_second: float = 30.0,
-    workers: int = 16,
+    workers: int | None = 0,
     upload: bool = False,
     bucket: str = "training-battles",
     prefix: str = "battles",
@@ -805,7 +821,7 @@ def collect_from_api(
         token_mode=api_token_mode,
         requests_per_second=requests_per_second,
     )
-    effective_workers = workers
+    effective_workers = _effective_worker_count(workers, requests_per_second)
     uploader = StorageClient(bucket, prefix, create=True) if upload else None
     deduplicator = Deduplicator(config.resolve(config.data["dedup_db"]))
     allowed_modes = set(config.data.get("allowed_modes") or [])
@@ -826,9 +842,12 @@ def collect_from_api(
         if balance
         else Counter()
     )
-    max_queued = max_queue if max_queue is not None else (
-        max_players * 4 if max_players is not None else None
-    )
+    if max_queue is not None and max_queue <= 0:
+        max_queued = None
+    elif max_queue is not None:
+        max_queued = max_queue
+    else:
+        max_queued = max_players * 4 if max_players is not None else DEFAULT_MAX_QUEUE
     frontier = BalancedFrontier(seeds, trophy_buckets, min_trophies, baseline_counts, max_queued)
 
     shard_index = _next_shard_index(raw_dir)
@@ -849,6 +868,7 @@ def collect_from_api(
         "api_token_mode": api_token_mode,
         "api_token_envs": client.token_names,
         "requests_per_second_total": requests_per_second,
+        "requested_workers": workers,
         "effective_workers": effective_workers,
         "progress": show_progress,
         "stats_interval_seconds": stats_interval_seconds,

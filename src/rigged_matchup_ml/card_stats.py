@@ -114,9 +114,8 @@ CARD_METADATA_FLAGS: tuple[str, ...] = (
     # baked into the trained checkpoint. Served checkpoints carry 45 features;
     # keeping "reflect" made the encoder emit 46, so the checkpoint loaded fine
     # and /health reported ok while every prediction died with "Card metadata
-    # width mismatch: got 46, expected 45". Ronin (26000106) still declares the
-    # tag in CARD_METADATA, so re-enabling it is a one-line revert once a 46-wide
-    # checkpoint ships.
+    # width mismatch: got 46, expected 45". Re-enable the flag and Ronin's
+    # generator tag together once a 46-wide checkpoint ships.
     # "reflect",
 )
 CARD_METADATA_TAGS: tuple[str, ...] = (*CARD_METADATA_ROLES, *CARD_METADATA_FLAGS)
@@ -132,8 +131,9 @@ CARD_METADATA_NUMERIC_FEATURES: tuple[str, ...] = (
 )
 
 # State-dependent blocks. A card id is the same for its base / evolved / hero
-# form in the battlelog (only evolutionLevel / heroLevel distinguish them), so
-# these effects are gated on the card's *form* at encode time, not just its id.
+# form in the battlelog. Supercell's evolutionLevel bit mask identifies Evo
+# (bit 1) and Hero (bit 2); heroLevel remains a compatibility fallback. These
+# effects are gated on the card's *form* at encode time, not just its id.
 #
 # Ability block -- a champion's always-on ability, or a hero card's button
 # ability (active only when the card is fielded as a hero). What the ability
@@ -323,9 +323,9 @@ def metadata_vector_for(
 ) -> tuple[float, ...]:
     """Stable float vector for a card in a given form; id 0 is all-zero padding.
 
-    ``evolved`` / ``hero`` select the card's form (from evolutionLevel /
-    heroLevel): the base card-id features are unchanged, and the trailing ability
-    and evolution blocks activate accordingly.
+    ``evolved`` / ``hero`` select the decoded card form: the base card-id
+    features are unchanged, and the trailing ability and evolution blocks
+    activate accordingly.
     """
     cid = int(card_id)
     if cid == 0:

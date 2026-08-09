@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from rigged_matchup_ml.domain import (
     ROLE_CHAMPION,
+    ROLE_HERO,
     canonical_game_id,
     parse_battle_row,
     parse_deck,
@@ -43,6 +44,27 @@ def test_champion_and_evolution_are_parsed() -> None:
     assert deck.cards[1].evolution_level == 1
     assert deck.cards[0].hero_level == 1
     assert deck.tower_troop_id == 159000000
+
+
+def test_evolution_level_bitmask_splits_evo_and_hero_forms() -> None:
+    payload = player("#A", 1)
+    payload["cards"][0] = {
+        "id": 26000011,
+        "level": 11,
+        "rarity": "rare",
+        "evolutionLevel": 2,
+    }
+    payload["cards"][1]["evolutionLevel"] = 3
+
+    deck = parse_deck(payload)
+
+    assert deck is not None
+    assert deck.cards[0].evolution_level == 0
+    assert deck.cards[0].hero_level == 1
+    assert deck.cards[0].role == ROLE_HERO
+    assert deck.cards[1].evolution_level == 1
+    assert deck.cards[1].hero_level == 1
+    assert deck.cards[1].role == ROLE_HERO
 
 
 def test_game_id_is_invariant_to_side_order() -> None:

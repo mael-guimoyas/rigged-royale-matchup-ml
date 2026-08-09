@@ -63,9 +63,9 @@ def collect_api(
         30.0, help="Global CR API request rate cap across all workers."
     ),
     workers: int = typer.Option(
-        16,
-        help="Concurrent CR API fetch threads. ~16 saturates the RoyaleAPI proxy "
-        "(~16 req/s); raise much higher only against the direct api.clashroyale.com.",
+        0,
+        help="Concurrent CR API fetch threads. 0 sizes the pool automatically from "
+        "--requests-per-second; use a positive value to override.",
     ),
     upload: bool = typer.Option(
         False, help="Also upload each Parquet shard to Supabase Storage."
@@ -75,7 +75,8 @@ def collect_api(
     max_queue: int | None = typer.Option(
         None,
         "--max-queue",
-        help="Cap active snowball frontier tags waiting to be fetched.",
+        help="Cap active snowball frontier tags waiting to be fetched "
+        "(default 100000; 0 means unlimited).",
     ),
     min_trophies: int | None = typer.Option(
         None,

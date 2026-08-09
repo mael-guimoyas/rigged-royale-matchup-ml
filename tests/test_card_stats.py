@@ -154,6 +154,24 @@ def test_evolved_form_activates_evo_block() -> None:
     assert evo[idx["evo:evo_control"]] == 1.0
 
 
+def test_august_2026_hero_and_evo_metadata() -> None:
+    from rigged_matchup_ml.card_stats import CARD_METADATA_VECTOR_FIELDS as fields
+    idx = {name: i for i, name in enumerate(fields)}
+    valkyrie = metadata_vector_for(26000011, hero=True)
+    berserker = metadata_vector_for(26000102, hero=True)
+    elite_barbarians = metadata_vector_for(26000043, evolved=True)
+
+    assert valkyrie[idx["state:ability_active"]] == 1.0
+    assert valkyrie[idx["ability:ability_dash"]] == 1.0
+    assert valkyrie[idx["ability:ability_damage"]] == 1.0
+    assert valkyrie[idx["ability:ability_shield"]] == 1.0
+    assert berserker[idx["ability:ability_buff"]] == 1.0
+    assert berserker[idx["ability:ability_shield"]] == 1.0
+    assert elite_barbarians[idx["evo:evo_damage"]] == 1.0
+    assert elite_barbarians[idx["evo:evo_buff"]] == 1.0
+    assert elite_barbarians[idx["num:evo_cycle"]] > 0.0
+
+
 def test_champion_ability_is_always_active() -> None:
     from rigged_matchup_ml.card_stats import CARD_METADATA_VECTOR_FIELDS as fields
     idx = {name: i for i, name in enumerate(fields)}

@@ -1,119 +1,145 @@
-# RunPod training guide
+# Réentraînement RunPod depuis zéro
 
-This repo can train on RunPod with one single GPU. The current trainer does not
-use DDP/DataParallel, so do not pay for 2 GPUs unless you add multi-GPU support.
+Prérequis : toutes les modifications ont été commit et push sur `main`, et les
+shards sont déjà présents dans Supabase Storage. Il n'y a aucune nouvelle collecte
+Clash Royale à lancer.
 
-## Best cheap config
+## 1. Créer le Pod
 
-For the current prepared dataset (~21M battles total, ~2.1 GB Parquet prepared)
-and the small model (~0.55M parameters), pick:
+Configuration conseillée :
 
-- Best value: 1x RTX 3090 Community Cloud, 24 GB VRAM, ideally >=8 vCPU and
-  >=40 GB RAM, 60-100 GB volume disk.
-- Faster if still cheap: 1x RTX 4090 Community Cloud, 24 GB VRAM, same storage.
-- Cheapest smoke/full test: 1x RTX A5000 24 GB. It should fit; it may be slower.
+- 1 × RTX 5090 32 Go ;
+- template officiel RunPod PyTorch compatible RTX 5090, avec CUDA et Python 3.11+ ;
+- au moins 8 vCPU et 32 Go de RAM ;
+- container disk : 30-40 Go ;
+- volume disk : 80 Go ;
+- terminal web/JupyterLab activé.
 
-Avoid A100/H100 for this project unless you later increase the architecture a
-lot. Avoid multi-GPU for now: the code will mostly use GPU 0 only.
+Le trainer utilise un seul GPU.
 
-Suggested RunPod settings:
+Sur cette configuration, prévoir environ **45 minutes pour l'entraînement**. Le
+téléchargement Supabase, `prepare`, Card2Vec, l'évaluation et le benchmark s'ajoutent
+à cette durée et dépendent surtout du réseau, du CPU et du volume de shards.
 
-- Template: official RunPod PyTorch template with CUDA, JupyterLab, and SSH.
-- GPU count: 1.
-- Container disk: 30-40 GB.
-- Volume disk: 60-100 GB for Community Cloud.
-- Network volume: only if you use Secure Cloud and want permanent reusable data.
+Dans les réglages du Pod RunPod, ajouter ces deux variables d'environnement :
 
-## Kaggle in parallel
-
-Use Kaggle for a free smoke run or a baseline run. Be aware that `GPU T4 x2`
-does not help much here unless the code is changed to use both GPUs. The current
-trainer uses one CUDA device.
-
-Recommended split:
-
-- Kaggle: quick sanity run, fewer epochs if needed.
-- RunPod: full run on the same prepared dataset.
-
-## Data options
-
-Option A is cleanest if your raw shards are already in Supabase Storage:
-
-```bash
-git clone https://github.com/mael-guimoyas/rigged-royale-matchup-ml.git
-cd rigged-royale-matchup-ml
-
-export SUPABASE_URL="https://YOURREF.supabase.co"
-export SUPABASE_SECRET_KEY="sb_secret_or_service_role"
-
-bash scripts/runpod_train.sh
+```text
+SUPABASE_URL=https://PROJECT_REF.supabase.co
+SUPABASE_SECRET_KEY=sb_secret_...
 ```
 
-The script will pull Storage shards, rebuild `prepare`, pretrain card embeddings,
-train, evaluate, and benchmark.
+Elles sont injectées directement dans le conteneur et ne viennent jamais de Git.
+`SUPABASE_SECRET_KEY` doit rester une variable serveur : ne pas la mettre dans le
+frontend, un fichier commité ou une capture d'écran.
 
-Option B uses your local prepared dataset:
+## 2. Tout lancer depuis un seul terminal web
 
-```powershell
-# Local Windows PowerShell, after installing runpodctl:
-runpodctl send data\prepared
-```
-
-On the Pod:
+Ouvrir le terminal RunPod, puis exécuter les commandes suivantes dans ce même
+terminal :
 
 ```bash
 cd /workspace
-runpodctl receive YOUR-CODE-FROM-SEND
-mkdir -p /workspace/data
-mv prepared /workspace/data/prepared
-
 git clone https://github.com/mael-guimoyas/rigged-royale-matchup-ml.git
 cd rigged-royale-matchup-ml
+
+git log -1 --oneline
+python --version
+nvidia-smi
+
+test -n "$SUPABASE_URL"
+test -n "$SUPABASE_SECRET_KEY"
+
+export TRAINING_BUCKET=training-battles
+export TRAINING_PREFIX=battles
+export STORAGE_DOWNLOAD_WORKERS=16
+
+export RUNPOD_BATCH_SIZE=8192
+export RUNPOD_EVAL_BATCH_SIZE=16384
+export RUNPOD_GRAD_ACCUM=1
+export RUNPOD_NUM_WORKERS=8
+export RUNPOD_EPOCHS=15
+export RUN_ATTACH_PRIOR=0
+export RUN_BENCHMARK=1
+
 bash scripts/runpod_train.sh
 ```
 
-For repeated or large transfers, use `rsync` over SSH instead of `runpodctl`.
+Les deux commandes `test -n` permettent de confirmer que les variables Supabase sont
+bien injectées. Si l'une d'elles renvoie une erreur, la corriger dans les réglages du
+Pod avant de lancer le script.
 
-## Tunables
-
-Defaults in `scripts/runpod_train.sh`:
-
-```bash
-RUNPOD_BATCH_SIZE=4096
-RUNPOD_EVAL_BATCH_SIZE=8192
-RUNPOD_NUM_WORKERS=4
-RUNPOD_EPOCHS=10
-```
-
-If you hit CUDA OOM, retry with:
-
-```bash
-RUNPOD_BATCH_SIZE=2048 RUNPOD_EVAL_BATCH_SIZE=4096 bash scripts/runpod_train.sh
-```
-
-If GPU usage is low and CPU/RAM are comfortable, try:
-
-```bash
-RUNPOD_BATCH_SIZE=8192 RUNPOD_EVAL_BATCH_SIZE=16384 RUNPOD_NUM_WORKERS=8 bash scripts/runpod_train.sh
-```
-
-## After training
-
-Artifacts are written to:
+Le script fait directement toute la chaîne :
 
 ```text
-/workspace/artifacts
+Supabase Storage
+  -> téléchargement des shards
+  -> préparation chronologique train/validation/test
+  -> préentraînement Card2Vec
+  -> entraînement CUDA
+  -> calibration et évaluation
+  -> benchmark
+  -> /workspace/artifacts/matchup-model.pt
 ```
 
-Send them back before terminating the Pod:
+Les anciens shards sont compatibles : les flags Hero/Evo sont corrigés pendant
+leur lecture. Il n'y a ni recollecte ni migration à faire.
+
+`RUN_ATTACH_PRIOR=0` est volontaire : le prior nécessite aussi le dépôt web
+`riggedroyale`. Le modèle est actuellement configuré pour apprendre sans ce prior.
+
+## 3. Vérifier le résultat
+
+Lorsque le script affiche `Done. Artifacts are in /workspace/artifacts` :
 
 ```bash
-runpodctl send /workspace/artifacts
+source /workspace/rrm-venv/bin/activate
+
+python - <<'PY'
+import json
+from pathlib import Path
+
+m = json.loads(Path('/workspace/data/prepared/manifest.json').read_text())
+print('raw_rows:', m['raw_rows'])
+print('unique_rows:', m['unique_rows'])
+print('splits:', m['counts'])
+print('cards_absent_from_train:', m['cards_absent_from_train'])
+PY
+
+ls -lh /workspace/artifacts
+test -s /workspace/artifacts/matchup-model.pt
+sha256sum /workspace/artifacts/matchup-model.pt
 ```
 
-Then receive locally with the command printed by RunPod.
+Les résultats principaux sont :
 
-Stop billing by stopping or terminating the Pod when finished. If you used a
-volume disk, copy the artifacts first because the disk is deleted when the Pod
-is terminated. If you used a network volume, storage keeps billing while it
-exists.
+- `/workspace/artifacts/matchup-model.pt` ;
+- `/workspace/artifacts/train.log` ;
+- `/workspace/artifacts/evaluate.log` ;
+- `/workspace/artifacts/benchmark.log`.
+
+## 4. En cas de CUDA OOM
+
+Réduire les batches et relancer :
+
+```bash
+export RUNPOD_BATCH_SIZE=4096
+export RUNPOD_EVAL_BATCH_SIZE=8192
+bash scripts/runpod_train.sh
+```
+
+Les shards, les splits et Card2Vec déjà présents sont réutilisés.
+
+## 5. Télécharger le modèle
+
+Dans le même terminal :
+
+```bash
+tar -czf /workspace/runpod-result.tar.gz -C /workspace/artifacts .
+ls -lh /workspace/runpod-result.tar.gz
+```
+
+Dans JupyterLab, ouvrir `/workspace`, faire un clic droit sur
+`runpod-result.tar.gz`, puis **Download**.
+
+Après avoir vérifié l'archive téléchargée, arrêter ou terminer le Pod pour couper
+la facturation.

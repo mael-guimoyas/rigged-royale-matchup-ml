@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "generated_at": "2026-07-25T10:50:45+00:00",
+  "generated_at": "2026-08-09T15:38:55+00:00",
   "source": {
     "method": "hand-curated taxonomy (offline, no scraping)",
     "generator": "scripts/refresh_card_metadata.py::CARD_TABLE"
@@ -32,8 +32,7 @@
       "reset_control",
       "spawner",
       "building_target",
-      "champion",
-      "reflect"
+      "champion"
     ],
     "numeric_features": [
       "elixir",
@@ -520,6 +519,15 @@
         "dps": 0.6,
         "speed": 0.5,
         "range": 0.2
+      },
+      "hero_ability": {
+        "cost": 3,
+        "tags": [
+          "ability_dash",
+          "ability_damage",
+          "ability_buff",
+          "ability_shield"
+        ]
       },
       "evo": {
         "cycle": 2,
@@ -1692,6 +1700,13 @@
         "dps": 0.8,
         "speed": 0.75,
         "range": 0.2
+      },
+      "evo": {
+        "cycle": 1,
+        "tags": [
+          "evo_damage",
+          "evo_buff"
+        ]
       }
     },
     "26000044": {
@@ -3460,6 +3475,13 @@
         "dps": 0.8,
         "speed": 0.75,
         "range": 0.2
+      },
+      "hero_ability": {
+        "cost": 3,
+        "tags": [
+          "ability_buff",
+          "ability_shield"
+        ]
       }
     },
     "26000103": {
@@ -3509,8 +3531,7 @@
       "role": "dps",
       "tags": [
         "dps",
-        "high_dps",
-        "reflect"
+        "high_dps"
       ],
       "tiers": {
         "hitpoints": 3,

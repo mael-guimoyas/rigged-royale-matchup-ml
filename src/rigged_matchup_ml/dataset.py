@@ -20,6 +20,7 @@ from .card_stats import (
     elixir_for,
     metadata_vector_for,
 )
+from .domain import ROLE_HERO
 
 
 FEATURE_COLUMNS = [
@@ -38,6 +39,42 @@ FEATURE_COLUMNS = [
     "matrix_prior",
     "win",
 ]
+
+
+def _normalise_form_values(
+    evolution_levels: list[int], hero_levels: list[int], roles: list[int]
+) -> tuple[list[int], list[int], list[int]]:
+    """Decode legacy form flags while accepting already-normalised rows.
+
+    Existing Parquet shards store Hero as Evo value 2 (or bit 2 of value 3),
+    with zero hero levels and normal roles. Decode lazily so raw and prepared
+    data remain trainable without recollection or an in-place rewrite.
+    """
+    raw_evos = _fixed_length(evolution_levels)
+    heroes = _fixed_length(hero_levels)
+    normalised_roles = _fixed_length(roles)
+    evos: list[int] = []
+    for index, raw_value in enumerate(raw_evos):
+        flags = max(0, int(raw_value))
+        evos.append(1 if flags & 1 else 0)
+        if heroes[index] <= 0 and flags & 2:
+            heroes[index] = 1
+        if heroes[index] > 0:
+            normalised_roles[index] = ROLE_HERO
+    return evos, heroes, normalised_roles
+
+
+def _normalise_form_arrays(
+    evos: np.ndarray, heroes: np.ndarray, roles: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Vectorised counterpart of :func:`_normalise_form_values`."""
+    flags = np.maximum(evos, 0)
+    normalised_evos = np.bitwise_and(flags, 1).astype(np.int64, copy=False)
+    hero_bits = np.bitwise_and(flags, 2) != 0
+    normalised_heroes = np.maximum(heroes, hero_bits.astype(np.int64))
+    normalised_roles = roles.copy()
+    normalised_roles[normalised_heroes > 0] = ROLE_HERO
+    return normalised_evos, normalised_heroes, normalised_roles
 
 
 def _fragments_by_row_group(split_dir: Path) -> list:
@@ -96,6 +133,16 @@ def encode_row(
         team_prefix, opponent_prefix = "team", "opponent"
         win = bool(row["win"])
         prior = float(row["matrix_prior"])
+    team_evos, team_heroes, team_roles = _normalise_form_values(
+        row[f"{team_prefix}_evolution_levels"],
+        row[f"{team_prefix}_hero_levels"],
+        row[f"{team_prefix}_card_roles"],
+    )
+    opponent_evos, opponent_heroes, opponent_roles = _normalise_form_values(
+        row[f"{opponent_prefix}_evolution_levels"],
+        row[f"{opponent_prefix}_hero_levels"],
+        row[f"{opponent_prefix}_card_roles"],
+    )
     return {
         "team_cards": torch.tensor(
             encode_cards(row[f"{team_prefix}_card_ids"]), dtype=torch.long
@@ -112,16 +159,16 @@ def encode_row(
         "team_card_metadata": torch.tensor(
             encode_metadata(
                 row[f"{team_prefix}_card_ids"],
-                row[f"{team_prefix}_evolution_levels"],
-                row[f"{team_prefix}_hero_levels"],
+                team_evos,
+                team_heroes,
             ),
             dtype=torch.float32,
         ),
         "opponent_card_metadata": torch.tensor(
             encode_metadata(
                 row[f"{opponent_prefix}_card_ids"],
-                row[f"{opponent_prefix}_evolution_levels"],
-                row[f"{opponent_prefix}_hero_levels"],
+                opponent_evos,
+                opponent_heroes,
             ),
             dtype=torch.float32,
         ),
@@ -132,22 +179,22 @@ def encode_row(
             encode_present(row[f"{opponent_prefix}_card_ids"]), dtype=torch.bool
         ),
         "team_evos": torch.tensor(
-            list(row[f"{team_prefix}_evolution_levels"][:8]), dtype=torch.long
+            team_evos, dtype=torch.long
         ),
         "opponent_evos": torch.tensor(
-            list(row[f"{opponent_prefix}_evolution_levels"][:8]), dtype=torch.long
+            opponent_evos, dtype=torch.long
         ),
         "team_heroes": torch.tensor(
-            list(row[f"{team_prefix}_hero_levels"][:8]), dtype=torch.long
+            team_heroes, dtype=torch.long
         ),
         "opponent_heroes": torch.tensor(
-            list(row[f"{opponent_prefix}_hero_levels"][:8]), dtype=torch.long
+            opponent_heroes, dtype=torch.long
         ),
         "team_roles": torch.tensor(
-            list(row[f"{team_prefix}_card_roles"][:8]), dtype=torch.long
+            team_roles, dtype=torch.long
         ),
         "opponent_roles": torch.tensor(
-            list(row[f"{opponent_prefix}_card_roles"][:8]), dtype=torch.long
+            opponent_roles, dtype=torch.long
         ),
         "team_tower": torch.tensor(
             vocabulary["towers"].get(str(row[f"{team_prefix}_tower_troop_id"]), 0),
@@ -236,10 +283,18 @@ def encode_rows(
         )
         team_raw_cards = list(row[f"{team_prefix}_card_ids"][:8])
         opponent_raw_cards = list(row[f"{opponent_prefix}_card_ids"][:8])
-        team_evo_levels = _fixed_length(row[f"{team_prefix}_evolution_levels"])
-        opponent_evo_levels = _fixed_length(row[f"{opponent_prefix}_evolution_levels"])
-        team_hero_lv = _fixed_length(row[f"{team_prefix}_hero_levels"])
-        opponent_hero_lv = _fixed_length(row[f"{opponent_prefix}_hero_levels"])
+        team_evo_levels, team_hero_lv, team_role_values = _normalise_form_values(
+            row[f"{team_prefix}_evolution_levels"],
+            row[f"{team_prefix}_hero_levels"],
+            row[f"{team_prefix}_card_roles"],
+        )
+        opponent_evo_levels, opponent_hero_lv, opponent_role_values = (
+            _normalise_form_values(
+                row[f"{opponent_prefix}_evolution_levels"],
+                row[f"{opponent_prefix}_hero_levels"],
+                row[f"{opponent_prefix}_card_roles"],
+            )
+        )
         team_card_metadata.append(
             [
                 metadata_vector_for(
@@ -264,12 +319,12 @@ def encode_rows(
         opponent_card_present.append(
             _fixed_length([int(c) > 0 for c in opponent_raw_cards])
         )
-        team_evos.append(_fixed_length(row[f"{team_prefix}_evolution_levels"]))
-        opponent_evos.append(_fixed_length(row[f"{opponent_prefix}_evolution_levels"]))
-        team_heroes.append(_fixed_length(row[f"{team_prefix}_hero_levels"]))
-        opponent_heroes.append(_fixed_length(row[f"{opponent_prefix}_hero_levels"]))
-        team_roles.append(_fixed_length(row[f"{team_prefix}_card_roles"]))
-        opponent_roles.append(_fixed_length(row[f"{opponent_prefix}_card_roles"]))
+        team_evos.append(team_evo_levels)
+        opponent_evos.append(opponent_evo_levels)
+        team_heroes.append(team_hero_lv)
+        opponent_heroes.append(opponent_hero_lv)
+        team_roles.append(team_role_values)
+        opponent_roles.append(opponent_role_values)
         team_towers.append(
             tower_vocabulary.get(str(row[f"{team_prefix}_tower_troop_id"]), 0)
         )
@@ -469,6 +524,14 @@ def _decode_batch(batch, context: _EncodeContext) -> dict[str, np.ndarray]:
     opponent_evos = _list_matrix(column("opponent_evolution_levels"))
     team_heroes = _list_matrix(column("team_hero_levels"))
     opponent_heroes = _list_matrix(column("opponent_hero_levels"))
+    team_roles = _list_matrix(column("team_card_roles"))
+    opponent_roles = _list_matrix(column("opponent_card_roles"))
+    team_evos, team_heroes, team_roles = _normalise_form_arrays(
+        team_evos, team_heroes, team_roles
+    )
+    opponent_evos, opponent_heroes, opponent_roles = _normalise_form_arrays(
+        opponent_evos, opponent_heroes, opponent_roles
+    )
     tower_team = column("team_tower_troop_id").to_numpy(zero_copy_only=False).astype(str)
     tower_opponent = column("opponent_tower_troop_id").to_numpy(zero_copy_only=False).astype(str)
     return {
@@ -498,8 +561,8 @@ def _decode_batch(batch, context: _EncodeContext) -> dict[str, np.ndarray]:
         "opponent_evos": opponent_evos,
         "team_heroes": team_heroes,
         "opponent_heroes": opponent_heroes,
-        "team_roles": _list_matrix(column("team_card_roles")),
-        "opponent_roles": _list_matrix(column("opponent_card_roles")),
+        "team_roles": team_roles,
+        "opponent_roles": opponent_roles,
         "team_tower": _lookup(tower_team, context.tower_keys, context.tower_values),
         "opponent_tower": _lookup(tower_opponent, context.tower_keys, context.tower_values),
         "segment": _lookup(

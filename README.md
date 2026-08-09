@@ -148,7 +148,7 @@ inactif, son propre battlelog serait tout aussi vieux.
 
 ```powershell
 # Réentraînement complet après un patch d'équilibrage : uniquement du 2 jours max.
-rigged-matchup collect-api --tags-file seeds.txt --max-age-days 2 --requests-per-second 75 --workers 22 --api-token-mode both --no-progress --stats-interval 10
+rigged-matchup collect-api --tags-file seeds.txt --max-age-days 2 --requests-per-second 75 --workers 0 --api-token-mode both --no-progress --stats-interval 10
 
 # Fenêtre plus large (une semaine), ou aucun filtre d'âge.
 rigged-matchup collect-api --tags-file seeds.txt --max-age-days 7
@@ -157,6 +157,12 @@ rigged-matchup collect-api --tags-file seeds.txt --max-age-days 0
 
 Le résumé JSON de fin de run expose `battles_skipped_stale` et `max_age_days` ; en
 `--no-progress`, la ligne de stats affiche aussi `stale=`.
+
+`--workers 0` dimensionne automatiquement le pool depuis `--requests-per-second` (83
+workers pour 75 req/s). Le limiteur global reste le garde-fou : davantage de workers
+compensent la latence réseau sans dépasser le débit demandé. Une valeur positive force
+la concurrence. La file snowball active est bornée à 100 000 tags par défaut afin de ne
+pas accumuler des millions de candidats ; `--max-queue 0` rétablit une file illimitée.
 
 Attention : la fenêtre s'applique **à la collecte**, pas aux shards déjà sur le disque.
 Pour un corpus 100 % nouvelle meta, collecte dans un `data/raw` vide (ou déplace les
@@ -413,7 +419,7 @@ joueurs crawlés (fenêtre `--max-age-days`, 2 jours par défaut), donc la nouve
 arrive dès qu'elle est jouée.
 
 ```powershell
-rigged-matchup collect-api --tags-file seeds.txt --requests-per-second 75 --workers 22 --max-battles 50000000 --api-token-mode both --no-progress --stats-interval 10
+rigged-matchup collect-api --tags-file seeds.txt --requests-per-second 75 --workers 0 --max-battles 50000000 --api-token-mode both --no-progress --stats-interval 10
 ```
 
 Le seul vrai critère est le **volume post-sortie** : il faut assez de combats depuis la

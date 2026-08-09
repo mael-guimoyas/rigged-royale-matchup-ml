@@ -10,6 +10,7 @@ from rigged_matchup_ml.api_collect import (
     RateLimiter,
     _battle_fingerprint,
     _battle_time,
+    _effective_worker_count,
     _fetch_player,
     _is_fresh,
     _ladder_bucket_label,
@@ -226,11 +227,13 @@ class _StubClient:
 
     def __init__(self, battles: list[dict]) -> None:
         self._battles = battles
+        self.player_calls = 0
 
     def battlelog(self, tag: str) -> list[dict]:
         return self._battles
 
     def player(self, tag: str) -> dict:
+        self.player_calls += 1
         return {"currentPathOfLegendSeasonResult": {"leagueNumber": 7}}
 
 
@@ -271,6 +274,52 @@ def test_fetch_player_without_age_window_keeps_everything() -> None:
     )
 
     assert (seen, stale, len(records)) == (1, 0, 1)
+
+
+def test_fetch_player_skips_profile_when_only_ranked_battle_is_stale() -> None:
+    now = datetime.now(timezone.utc)
+    stale_ranked = _battle(battle_time=_api_time(now - timedelta(days=9)))
+    fresh_ladder = _battle("PvP", battle_time=_api_time(now - timedelta(hours=1)))
+    fresh_ladder["team"][0]["startingTrophies"] = 8000
+    fresh_ladder["opponent"][0]["startingTrophies"] = 8000
+    client = _StubClient([stale_ranked, fresh_ladder])
+
+    records, _candidates, seen, stale = _fetch_player(
+        client,
+        "#AAA",
+        DATA_CONFIG,
+        {"ladder", "ranked"},
+        snowball=True,
+        min_trophies=5000,
+        max_age_days=2,
+    )
+
+    assert (seen, stale, len(records)) == (2, 1, 1)
+    assert client.player_calls == 0
+
+
+def test_fetch_player_loads_profile_for_a_fresh_ranked_battle() -> None:
+    now = datetime.now(timezone.utc)
+    client = _StubClient([_battle(battle_time=_api_time(now - timedelta(hours=1)))])
+
+    records, _candidates, _seen, _stale = _fetch_player(
+        client,
+        "#AAA",
+        DATA_CONFIG,
+        {"ladder", "ranked"},
+        snowball=True,
+        min_trophies=5000,
+        max_age_days=2,
+    )
+
+    assert records[0]["segment"] == "ranked:league-7"
+    assert client.player_calls == 1
+
+
+def test_worker_count_auto_sizes_for_target_rate_and_honors_override() -> None:
+    assert _effective_worker_count(22, 75) == 22
+    assert _effective_worker_count(0, 75) == 83
+    assert _effective_worker_count(None, 10) == 16
 
 
 def test_ladder_bucket_label_splits_seasonal_road() -> None:

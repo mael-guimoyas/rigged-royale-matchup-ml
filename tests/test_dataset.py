@@ -64,6 +64,30 @@ def test_encode_rows_matches_swapped_encode_row() -> None:
     )
 
 
+def test_legacy_form_flags_are_decoded_without_recollection() -> None:
+    sample = row()
+    # Existing Parquet: Hero lived in evolutionLevel bit 2 while the separate
+    # hero/role columns remained zero/normal.
+    sample["team_evolution_levels"][0] = 2
+    sample["team_hero_levels"][0] = 0
+    sample["team_card_roles"][0] = 1
+    sample["team_evolution_levels"][1] = 3
+    sample["team_hero_levels"][1] = 0
+    sample["team_card_roles"][1] = 1
+
+    encoded = encode_row(sample, VOCABULARY)
+    assert encoded["team_evos"][:2].tolist() == [0, 1]
+    assert encoded["team_heroes"][:2].tolist() == [1, 1]
+    assert encoded["team_roles"][:2].tolist() == [3, 3]
+
+    _assert_batch_matches_row(encode_rows([sample], VOCABULARY), encoded)
+
+    context = _EncodeContext(VOCABULARY)
+    decoded = _decode_batch(_record_batch([sample]), context)
+    vectorised = _assemble_batch(decoded, np.zeros(1, dtype=bool), 0, 1)
+    _assert_batch_matches_row(vectorised, encoded)
+
+
 def _record_batch(rows: list[dict]) -> pa.RecordBatch:
     return pa.RecordBatch.from_pydict(
         {name: [r[name] for r in rows] for name in rows[0]}

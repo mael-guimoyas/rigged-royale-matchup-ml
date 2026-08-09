@@ -191,7 +191,9 @@ CARD_TABLE: dict[int, tuple[str, str, tuple[str, ...], int, int, int, int, int]]
     # Ronin (Season 85, July 2026): 5 elixir Legendary ground melee troop.
     # ~1779 hp (Knight-class body), 337 dmg @1.4s hit speed, Fast. "Parry":
     # blocks one ground melee hit every 3.5s and reflects ~double back.
-    26000106: ("troop", "dps", ("high_dps", "reflect"), 3, 4, 4, 3, 1),                   # Ronin
+    # Keep retired ``reflect`` out until a new metadata width is introduced;
+    # card_stats.py documents the checkpoint compatibility impact.
+    26000106: ("troop", "dps", ("high_dps",), 3, 4, 4, 3, 1),                            # Ronin
     28000016: ("troop", "swarm", (), 1, 1, 1, 4, 2),                                      # Heal Spirit
     28000025: ("troop", "support", ("splash", "air_target"), 2, 3, 3, 2, 4),              # Spirit Empress
     # --- Buildings --------------------------------------------------------
@@ -291,8 +293,8 @@ CHAMPION_ABILITY: dict[int, tuple[int, tuple[str, ...]]] = {
 }
 
 # Hero button ability, keyed by the BASE card id; applies only when the card is
-# fielded in hero form (heroLevel > 0). cost = elixir to activate the ability.
-# Several ability costs are best-effort estimates -- verify against the wiki.
+# fielded in hero form (evolutionLevel bit 2, with heroLevel as a fallback).
+# cost = elixir to activate the ability.
 HERO_ABILITY: dict[int, tuple[int, tuple[str, ...]]] = {
     26000000: (2, ("ability_control",)),                   # Hero Knight - Royal Taunt
     26000003: (3, ("ability_control",)),                   # Hero Giant - Heroic Hurl
@@ -308,6 +310,12 @@ HERO_ABILITY: dict[int, tuple[int, tuple[str, ...]]] = {
     26000027: (3, ("ability_damage", "ability_dash")),     # Hero Dark Prince - Destructive Dismount
     26000034: (2, ("ability_damage",)),                    # Hero Bowler - Stone Swish
     27000009: (6, ("ability_spawn",)),                     # Hero Tombstone - Regal Revival
+    # August 2026: Wild Whirlwind rushes between targets, deals rapid area
+    # damage, and grants 15% damage reduction during the spin.
+    26000011: (3, ("ability_dash", "ability_damage", "ability_buff", "ability_shield")),
+    # Savage Survival buffs speed/damage and prevents Berserker dropping below
+    # 1 HP for its duration (the game's "Unkillable" state).
+    26000102: (3, ("ability_buff", "ability_shield")),
 }
 
 # Evolution effects, keyed by base card id; apply only when fielded evolved
@@ -326,6 +334,9 @@ EVO_EFFECT: dict[int, tuple[int, tuple[str, ...]]] = {
     26000014: (2, ("evo_damage",)),                  # Evo Musketeer - long-range triple shot
     26000015: (2, ("evo_control", "evo_buff")),      # Evo Baby Dragon - gusts slow foes/speed allies
     26000017: (2, ("evo_shield",)),                  # Evo Wizard - shield (no splash boost)
+    # August 2026: each E-Barb throws a damaging Rage Spear every 5 seconds;
+    # its hit and trail create allied Rage zones. One cycle to activate.
+    26000043: (1, ("evo_damage", "evo_buff")),       # Evo Elite Barbarians - Rage Spears
     26000024: (2, ("evo_control", "evo_damage")),    # Evo Royal Giant - knockback on every shot
     26000030: (1, ("evo_control",)),                 # Evo Ice Spirit - freezes twice
     26000035: (2, ("evo_spawn", "evo_buff")),        # Evo Lumberjack - rage ghost on death
