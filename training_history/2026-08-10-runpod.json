@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "run_id": "runpod-2026-08-10",
-  "captured_at": "2026-08-10T01:01:16+02:00",
+  "captured_at": "2026-08-10T01:21:03+02:00",
   "status": "in_progress",
   "initialization": {
     "card2vec_init": "loaded",
@@ -10,7 +10,7 @@
   },
   "training": {
     "epochs_configured": 15,
-    "epochs_recorded": 8
+    "epochs_recorded": 13
   },
   "epochs": [
     {
@@ -244,6 +244,161 @@
         "brier_score": -0.00041395425796509,
         "expected_calibration_error": 0.00678304726478982,
         "expected_calibration_error_quantile": 0.00674936662523116
+      }
+    },
+    {
+      "epoch": 9,
+      "training": {
+        "iterations": 2552,
+        "duration_seconds": 303,
+        "iterations_per_second": 8.42,
+        "trailing_loss": 0.6209,
+        "ending_learning_rate": 0.000414
+      },
+      "validation": {
+        "rows": 4233340,
+        "win_rate": 0.5298886895179749,
+        "mean_prediction": 0.5247935056686401,
+        "accuracy": 0.6513729112237618,
+        "auc": 0.7115631901990056,
+        "log_loss": 0.6178239583969116,
+        "brier_score": 0.21503227949142456,
+        "expected_calibration_error": 0.012015463855642507,
+        "expected_calibration_error_quantile": 0.012210828318935751,
+        "calibration_slope": 1.1005449295043945,
+        "calibration_intercept": 0.014987971633672714
+      },
+      "delta_from_previous_validation": {
+        "accuracy": 0.000368030916486739,
+        "auc": 0.00047470537346983,
+        "log_loss": -0.00107020139694214,
+        "brier_score": -0.00039401650428772,
+        "expected_calibration_error": -0.00552811133353796,
+        "expected_calibration_error_quantile": -0.00547086995651713
+      }
+    },
+    {
+      "epoch": 10,
+      "training": {
+        "iterations": 2552,
+        "duration_seconds": 323,
+        "iterations_per_second": 7.9,
+        "trailing_loss": 0.6214,
+        "ending_learning_rate": 0.000312
+      },
+      "validation": {
+        "rows": 4233340,
+        "win_rate": 0.5298886895179749,
+        "mean_prediction": 0.5251893997192383,
+        "accuracy": 0.6523274766496431,
+        "auc": 0.7127659336183065,
+        "log_loss": 0.6165774464607239,
+        "brier_score": 0.2145172506570816,
+        "expected_calibration_error": 0.006862632582913898,
+        "expected_calibration_error_quantile": 0.006897048339434754,
+        "calibration_slope": 1.049952507019043,
+        "calibration_intercept": 0.017170462757349014
+      },
+      "delta_from_previous_validation": {
+        "accuracy": 0.000954565425881238,
+        "auc": 0.00120274341930093,
+        "log_loss": -0.00124651193618774,
+        "brier_score": -0.000515028834342957,
+        "expected_calibration_error": -0.00515283127272861,
+        "expected_calibration_error_quantile": -0.005313779979501
+      }
+    },
+    {
+      "epoch": 11,
+      "training": {
+        "iterations": 2552,
+        "duration_seconds": 221,
+        "iterations_per_second": 11.5,
+        "trailing_loss": 0.6186,
+        "ending_learning_rate": 0.000219
+      },
+      "validation": {
+        "rows": 4233340,
+        "win_rate": 0.5298886895179749,
+        "mean_prediction": 0.5243802666664124,
+        "accuracy": 0.6528818852253776,
+        "auc": 0.713495936049767,
+        "log_loss": 0.6162013411521912,
+        "brier_score": 0.21432490646839142,
+        "expected_calibration_error": 0.007672128706155754,
+        "expected_calibration_error_quantile": 0.0077625934695369275,
+        "calibration_slope": 1.0706617832183838,
+        "calibration_intercept": 0.019593067467212677
+      },
+      "delta_from_previous_validation": {
+        "accuracy": 0.000554408575734522,
+        "auc": 0.000730002431460486,
+        "log_loss": -0.000376105308532715,
+        "brier_score": -0.000192344188690186,
+        "expected_calibration_error": 0.000809496123241856,
+        "expected_calibration_error_quantile": 0.000865545130102174
+      }
+    },
+    {
+      "epoch": 12,
+      "training": {
+        "iterations": 2552,
+        "duration_seconds": 147,
+        "iterations_per_second": 17.31,
+        "trailing_loss": 0.6176,
+        "ending_learning_rate": 0.000138
+      },
+      "validation": {
+        "rows": 4233340,
+        "win_rate": 0.5298886895179749,
+        "mean_prediction": 0.524299144744873,
+        "accuracy": 0.6530956644162765,
+        "auc": 0.7137606221439282,
+        "log_loss": 0.6159254312515259,
+        "brier_score": 0.21422207355499268,
+        "expected_calibration_error": 0.007338863833756312,
+        "expected_calibration_error_quantile": 0.007388593701191544,
+        "calibration_slope": 1.0522397756576538,
+        "calibration_intercept": 0.02152351848781109
+      },
+      "delta_from_previous_validation": {
+        "accuracy": 0.000213779190898933,
+        "auc": 0.000264686094161193,
+        "log_loss": -0.000275909900665283,
+        "brier_score": -0.000102832913398743,
+        "expected_calibration_error": -0.000333264872399442,
+        "expected_calibration_error_quantile": -0.000373999768345384
+      }
+    },
+    {
+      "epoch": 13,
+      "training": {
+        "iterations": 2552,
+        "duration_seconds": 147,
+        "iterations_per_second": 17.36,
+        "trailing_loss": 0.6182,
+        "ending_learning_rate": 0.0000738
+      },
+      "validation": {
+        "rows": 4233340,
+        "win_rate": 0.5298886895179749,
+        "mean_prediction": 0.525360107421875,
+        "accuracy": 0.653289364898638,
+        "auc": 0.7141676507739433,
+        "log_loss": 0.6156449317932129,
+        "brier_score": 0.21409167349338531,
+        "expected_calibration_error": 0.006668884486315241,
+        "expected_calibration_error_quantile": 0.0067448439537348805,
+        "calibration_slope": 1.0608986616134644,
+        "calibration_intercept": 0.015750406309962273
+      },
+      "delta_from_previous_validation": {
+        "accuracy": 0.000193700482361447,
+        "auc": 0.000407028630015072,
+        "log_loss": -0.000280499458312988,
+        "brier_score": -0.000130400061607361,
+        "expected_calibration_error": -0.000669979347441072,
+        "expected_calibration_error_quantile": -0.000643749747456663
       }
     }
   ],
