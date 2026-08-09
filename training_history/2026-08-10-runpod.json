@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "run_id": "runpod-2026-08-10",
-  "captured_at": "2026-08-10T00:45:42+02:00",
+  "captured_at": "2026-08-10T00:52:12+02:00",
   "status": "in_progress",
   "initialization": {
     "card2vec_init": "loaded",
@@ -10,7 +10,7 @@
   },
   "training": {
     "epochs_configured": 15,
-    "epochs_recorded": 5
+    "epochs_recorded": 6
   },
   "epochs": [
     {
@@ -151,6 +151,37 @@
         "brier_score": -0.00129556655883788,
         "expected_calibration_error": -0.00813268095762845,
         "expected_calibration_error_quantile": -0.0083004067065182
+      }
+    },
+    {
+      "epoch": 6,
+      "training": {
+        "iterations": 2552,
+        "duration_seconds": 304,
+        "iterations_per_second": 8.38,
+        "trailing_loss": 0.6226,
+        "ending_learning_rate": 0.000724
+      },
+      "validation": {
+        "rows": 4233340,
+        "win_rate": 0.5298886895179749,
+        "mean_prediction": 0.5237667560577393,
+        "accuracy": 0.6477993735442936,
+        "auc": 0.7068157478237841,
+        "log_loss": 0.6206637620925903,
+        "brier_score": 0.21631869673728943,
+        "expected_calibration_error": 0.007049505732366385,
+        "expected_calibration_error_quantile": 0.006857380697794584,
+        "calibration_slope": 1.041961431503296,
+        "calibration_intercept": 0.024412672966718674
+      },
+      "delta_from_previous_validation": {
+        "accuracy": 0.0007422035555849,
+        "auc": 0.0008539096570118,
+        "log_loss": -0.0007081627845764,
+        "brier_score": -0.00029218196868897,
+        "expected_calibration_error": -0.000113657732318675,
+        "expected_calibration_error_quantile": -0.000227367665953388
       }
     }
   ],
