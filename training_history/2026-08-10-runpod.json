@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "run_id": "runpod-2026-08-10",
+  "captured_at": "2026-08-10T00:26:25+02:00",
+  "status": "in_progress",
+  "initialization": {
+    "card2vec_init": "loaded",
+    "card2vec_shape": [134, 64],
+    "loss_card_frequency_weighting": true
+  },
+  "training": {
+    "epochs_configured": 15,
+    "epochs_recorded": 1,
+    "epoch_1_iterations": 2552,
+    "epoch_1_duration_seconds": 185,
+    "epoch_1_iterations_per_second": 13.77,
+    "epoch_1_trailing_loss": 0.6396,
+    "epoch_1_ending_learning_rate": 0.000999
+  },
+  "epochs": [
+    {
+      "epoch": 1,
+      "validation": {
+        "rows": 4233340,
+        "win_rate": 0.5298886895179749,
+        "mean_prediction": 0.5161393284797668,
+        "accuracy": 0.6271509021245636,
+        "auc": 0.680338244839606,
+        "log_loss": 0.6376619338989258,
+        "brier_score": 0.2239018976688385,
+        "expected_calibration_error": 0.014464594407610797,
+        "expected_calibration_error_quantile": 0.014209794061241725,
+        "calibration_slope": 1.0895073413848877,
+        "calibration_intercept": 0.056150052696466446
+      }
+    }
+  ],
+  "notes": [
+    "Validation metrics captured after epoch 1, before final checkpoint calibration.",
+    "Detailed calibration-bin rows were omitted because the supplied log was truncated."
+  ]
+}
