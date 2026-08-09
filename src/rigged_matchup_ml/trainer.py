@@ -528,6 +528,9 @@ def train_model(config: AppConfig) -> Path:
             "data_config": {
                 "trophy_buckets": list(config.data["trophy_buckets"]),
                 "top_ladder_buckets": list(config.data["top_ladder_buckets"]),
+                "ranked_league_buckets": list(
+                    config.data.get("ranked_league_buckets") or []
+                ),
             },
             "feature_version": 5,
         },

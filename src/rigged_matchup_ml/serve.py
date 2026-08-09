@@ -35,6 +35,7 @@ DEFAULT_MODEL_NAME = "symmetric-matchup"
 DEFAULT_DATA_CONFIG = {
     "trophy_buckets": [0, 5000, 7000, 9000, 12000, 14000, 999999],
     "top_ladder_buckets": [100, 1000, 10000],
+    "ranked_league_buckets": [1, 3, 5, 8],
 }
 
 
@@ -183,10 +184,10 @@ def resolve_segment(
     """Place the request in its trained segment from the site's bracket inputs.
 
     Reuses the exact training-time rule (:func:`domain.segment_for`): ladder
-    splits by global rank then trophy bucket; ranked by league number. Falls back
-    to :func:`default_segment` when the request carries no bracket info OR the
-    resolved segment is not in the checkpoint vocabulary (an unknown segment has
-    no fitted calibration, so the representative default is safer).
+    splits by global rank then trophy bucket; ranked by configured league group.
+    Falls back to :func:`default_segment` when the request carries no bracket
+    info OR the resolved segment is not in the checkpoint vocabulary (an unknown
+    segment has no fitted calibration, so the representative default is safer).
     """
     mode = (request.mode_key or "").strip().lower()
     has_bracket = (

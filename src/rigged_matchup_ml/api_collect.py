@@ -77,15 +77,66 @@ class RateLimiter:
 def _effective_worker_count(workers: int | None, requests_per_second: float) -> int:
     """Resolve explicit concurrency or size it to keep the rate limiter busy.
 
-    CR API responses commonly take around 0.8-1.0 seconds through the RoyaleAPI
-    proxy. A 75 req/s target therefore needs roughly 60-75 simultaneous sockets;
+    Sustained CR API responses can take around 2 seconds through the RoyaleAPI
+    proxy. A 75 req/s target therefore needs roughly 150 simultaneous sockets;
     the old 16/22-worker recommendation could never reach that target even with
-    zero 429 responses. Extra workers are harmless because ``RateLimiter`` still
-    enforces the configured global request rate.
+    zero 429 responses. The 2.5x margin also covers slow tail requests. Extra
+    workers are harmless because ``RateLimiter`` still enforces the configured
+    global request rate.
     """
     if workers is not None and workers > 0:
         return workers
-    return min(256, max(16, math.ceil(max(requests_per_second, 0.1) * 1.1)))
+    return min(256, max(16, math.ceil(max(requests_per_second, 0.1) * 2.5)))
+
+
+class CollectorRunLock:
+    """Cross-process lock preventing concurrent writers in one raw directory.
+
+    Separate collect-api processes do not share a rate limiter or frontier and
+    can compute the same next Parquet shard name. An OS-level advisory lock is
+    released automatically even if the process crashes, unlike a PID marker.
+    """
+
+    def __init__(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._handle = path.open("a+b")
+        self._locked = False
+        self._handle.seek(0, os.SEEK_END)
+        if self._handle.tell() == 0:
+            self._handle.write(b"\0")
+            self._handle.flush()
+        self._handle.seek(0)
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(self._handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(self._handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as error:
+            self._handle.close()
+            raise RuntimeError(
+                f"Another collect-api process is already writing to {path.parent}. "
+                "Use one process with --workers 0; multiple writers can overwrite shards."
+            ) from error
+        self._locked = True
+
+    def close(self) -> None:
+        if not self._locked:
+            return
+        self._handle.seek(0)
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(self._handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(self._handle.fileno(), fcntl.LOCK_UN)
+        self._locked = False
+        self._handle.close()
 
 
 def _now_iso() -> str:
@@ -850,7 +901,6 @@ def collect_from_api(
         max_queued = max_players * 4 if max_players is not None else DEFAULT_MAX_QUEUE
     frontier = BalancedFrontier(seeds, trophy_buckets, min_trophies, baseline_counts, max_queued)
 
-    shard_index = _next_shard_index(raw_dir)
     buffer: list[dict[str, Any]] = []
     summary = {
         "players_processed": 0,
@@ -952,7 +1002,11 @@ def collect_from_api(
         last_stats_requests = client.requests
         last_stats_players = summary["players_processed"]
 
+    run_lock = CollectorRunLock(raw_dir / ".collect-api.lock")
     try:
+        # Resolve the next name only after acquiring the lock; otherwise a process
+        # finishing just before this one starts could make the earlier scan stale.
+        shard_index = _next_shard_index(raw_dir)
         with ThreadPoolExecutor(max_workers=effective_workers) as executor:
             inflight: dict[Future, str] = {}
 
@@ -1021,6 +1075,7 @@ def collect_from_api(
             pass
         progress.close()
         deduplicator.close()
+        run_lock.close()
 
     summary["requests"] = client.requests
     summary["rate_limited"] = client.rate_limited

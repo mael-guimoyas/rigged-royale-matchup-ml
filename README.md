@@ -14,7 +14,7 @@ utilisable comme prior, jamais comme cible principale. Le modèle prend en compt
 - un mini-Transformer optionnel sur les 16 cartes orientées `team/opponent` ;
 - des adapters par segment qui modulent les interactions selon le contexte méta ;
 - les tower troops ;
-- le mode, le patch et le segment d'arène/ladder/ranked league ;
+- le mode, le patch et le segment d'arène/ladder/groupe de ligues ranked ;
 - facultativement, la probabilité fournie par la matrice existante.
 
 Il n'utilise ni identité, ni historique, ni winrate personnel du joueur.
@@ -158,11 +158,16 @@ rigged-matchup collect-api --tags-file seeds.txt --max-age-days 0
 Le résumé JSON de fin de run expose `battles_skipped_stale` et `max_age_days` ; en
 `--no-progress`, la ligne de stats affiche aussi `stale=`.
 
-`--workers 0` dimensionne automatiquement le pool depuis `--requests-per-second` (83
+`--workers 0` dimensionne automatiquement le pool depuis `--requests-per-second` (188
 workers pour 75 req/s). Le limiteur global reste le garde-fou : davantage de workers
 compensent la latence réseau sans dépasser le débit demandé. Une valeur positive force
 la concurrence. La file snowball active est bornée à 100 000 tags par défaut afin de ne
 pas accumuler des millions de candidats ; `--max-queue 0` rétablit une file illimitée.
+
+Ne lance pas plusieurs `collect-api` sur le même `raw_dir` : leurs limiteurs ne sont pas
+partagés, la déduplication SQLite devient un point de contention et leurs noms de shards
+peuvent entrer en collision. Un verrou de processus refuse désormais ce cas ; augmente la
+concurrence d'un seul processus avec `--workers` ou utilise le dimensionnement automatique.
 
 Attention : la fenêtre s'applique **à la collecte**, pas aux shards déjà sur le disque.
 Pour un corpus 100 % nouvelle meta, collecte dans un `data/raw` vide (ou déplace les
@@ -171,7 +176,9 @@ anciens shards ailleurs) — sinon `prepare` mélangera l'ancien et le neuf.
 Il faut une amorce : `--from-supabase N` (tags depuis `public.players`) ou `--tags-file`.
 Chaque battlelog fournit l'adversaire ; `--snowball` (par défaut) met ces tags en file
 pour élargir la couverture. La `leagueNumber` vient du profil du joueur (`/players/{tag}`),
-donc les combats ranked sont segmentés `ranked:league-N` dès la collecte, sans backfill.
+donc les Parquet bruts conservent `ranked:league-N` dès la collecte, sans backfill.
+`prepare` regroupe ensuite ces valeurs selon `data.ranked_league_buckets` sans réécrire les
+shards : par défaut `league-1-2`, `league-3-4` et `league-5-7`.
 La déduplication réutilise `data/dedup.sqlite3` (clé `game_id` canonique : un même combat
 vu chez deux joueurs n'est compté qu'une fois).
 
@@ -237,7 +244,9 @@ métriques par segment. N'utilise pas `empirical_matchup_snapshots.current` pour
 benchmark passé si sa date de construction est postérieure au début de la validation
 ou du test.
 
-Les combats ranked sont segmentés par `leagueNumber` (`ranked:league-7`, etc.).
+Les combats ranked bruts gardent leur `leagueNumber` exact (`ranked:league-7`, etc.), puis
+`prepare` les regroupe en `ranked:league-1-2`, `ranked:league-3-4` et
+`ranked:league-5-7`. Les bornes `[1, 3, 5, 8]` sont configurables sans recollecte.
 Les trophées ranked ne sont pas utilisés comme fallback de league ; sans `leagueNumber`,
 le segment reste `ranked:unknown`.
 

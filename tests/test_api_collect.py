@@ -7,6 +7,7 @@ import rigged_matchup_ml.api_collect as api_collect
 from rigged_matchup_ml.api_collect import (
     BalancedFrontier,
     ClashRoyaleClient,
+    CollectorRunLock,
     RateLimiter,
     _battle_fingerprint,
     _battle_time,
@@ -180,6 +181,7 @@ def test_api_battle_parses_into_training_row() -> None:
         "max_raw_average_level_difference": None,
         "trophy_buckets": [0, 5000, 7000, 9000, 12000, 14000, 999999],
         "top_ladder_buckets": [100, 1000, 10000],
+        "ranked_league_buckets": [1, 3, 5, 8],
     }
     row = {
         "raw": _battle(),
@@ -193,6 +195,7 @@ def test_api_battle_parses_into_training_row() -> None:
     parsed = parse_battle_row(row, data_config)
 
     assert parsed is not None
+    # Collection deliberately retains the exact league; prepare pools it later.
     assert parsed["segment"] == "ranked:league-7"
     assert parsed["win"] is True
     assert len(parsed["team_card_ids"]) == 8
@@ -318,8 +321,21 @@ def test_fetch_player_loads_profile_for_a_fresh_ranked_battle() -> None:
 
 def test_worker_count_auto_sizes_for_target_rate_and_honors_override() -> None:
     assert _effective_worker_count(22, 75) == 22
-    assert _effective_worker_count(0, 75) == 83
-    assert _effective_worker_count(None, 10) == 16
+    assert _effective_worker_count(0, 75) == 188
+    assert _effective_worker_count(None, 10) == 25
+
+
+def test_collector_run_lock_rejects_concurrent_writer_and_releases(tmp_path) -> None:
+    lock_path = tmp_path / ".collect-api.lock"
+    first = CollectorRunLock(lock_path)
+    try:
+        with pytest.raises(RuntimeError, match="Another collect-api process"):
+            CollectorRunLock(lock_path)
+    finally:
+        first.close()
+
+    replacement = CollectorRunLock(lock_path)
+    replacement.close()
 
 
 def test_ladder_bucket_label_splits_seasonal_road() -> None:

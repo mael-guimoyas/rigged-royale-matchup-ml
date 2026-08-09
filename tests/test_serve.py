@@ -71,6 +71,54 @@ def test_request_to_row_spreads_evolution_ids_onto_positions() -> None:
     assert row["matrix_prior"] == 0.5
 
 
+def test_request_to_row_routes_ranked_leagues_to_trained_groups() -> None:
+    vocabulary = {
+        **FAKE_VOCAB,
+        "segments": {
+            "ranked:league-1-2": 1,
+            "ranked:league-3-4": 2,
+            "ranked:league-5-7": 3,
+        },
+    }
+    bundle = {
+        "vocabulary": vocabulary,
+        "data_config": {
+            "trophy_buckets": [0, 5000, 7000, 9000, 12000, 14000, 999999],
+            "top_ladder_buckets": [100, 1000, 10000],
+            "ranked_league_buckets": [1, 3, 5, 8],
+        },
+    }
+    expected = {
+        1: "ranked:league-1-2",
+        3: "ranked:league-3-4",
+        5: "ranked:league-5-7",
+        7: "ranked:league-5-7",
+    }
+    for league, segment in expected.items():
+        request = MatchupRequest(
+            **{**WEB_PAYLOAD, "mode_key": "ranked", "league_number": league}
+        )
+        assert request_to_row(request, bundle)["segment"] == segment
+
+
+def test_request_to_row_keeps_legacy_exact_ranked_checkpoint_compatible() -> None:
+    vocabulary = {
+        **FAKE_VOCAB,
+        "segments": {"ranked:league-6": 1},
+    }
+    bundle = {
+        "vocabulary": vocabulary,
+        "data_config": {
+            "trophy_buckets": [0, 5000, 7000, 9000, 12000, 14000, 999999],
+            "top_ladder_buckets": [100, 1000, 10000],
+        },
+    }
+    request = MatchupRequest(
+        **{**WEB_PAYLOAD, "mode_key": "ranked", "league_number": 6}
+    )
+    assert request_to_row(request, bundle)["segment"] == "ranked:league-6"
+
+
 def test_request_to_row_reconstructs_champion_and_hero_roles() -> None:
     # Golden Knight (26000074) is a champion id; 26000064 is sent as a hero form.
     payload = {

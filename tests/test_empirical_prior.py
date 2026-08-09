@@ -128,18 +128,18 @@ def test_prior_helper_is_bounded_and_symmetric(tmp_path: Path) -> None:
     assert scored[1]["coverage"]["planGlobal"] is True
 
 
-def test_prior_helper_keeps_ranked_league_buckets(tmp_path: Path) -> None:
+def test_prior_helper_keeps_grouped_ranked_league_buckets(tmp_path: Path) -> None:
     matrix = {
         **EMPTY_MATRIX,
         "planBucket": [
             {
-                "key": "ranked:league-7#shell:cycle>lava-hound",
+                "key": "ranked:league-5-7#shell:cycle>lava-hound",
                 "delta": 0.5,
                 "n": 120,
                 "weight": 1.0,
             },
             {
-                "key": "ranked:league-7#lava-hound>shell:cycle",
+                "key": "ranked:league-5-7#lava-hound>shell:cycle",
                 "delta": -0.5,
                 "n": 120,
                 "weight": 1.0,
@@ -151,12 +151,12 @@ def test_prior_helper_keeps_ranked_league_buckets(tmp_path: Path) -> None:
         matrix,
         [
             {
-                "segment": "ranked:league-7",
+                "segment": "ranked:league-5-7",
                 "team_card_ids": HOG_CYCLE,
                 "opponent_card_ids": GOLEM_BEATDOWN,
             }
         ],
     )
-    assert scored[0]["context"]["bucket"] == "ranked:league-7"
+    assert scored[0]["context"]["bucket"] == "ranked:league-5-7"
     assert scored[0]["coverage"]["planBucket"] is True
     assert scored[0]["prior"] > 0.5

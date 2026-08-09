@@ -4,8 +4,8 @@ import hashlib
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from itertools import pairwise
 from typing import Any
-
 
 ROLE_NORMAL = 1
 ROLE_CHAMPION = 2
@@ -174,8 +174,46 @@ def ranked_league_number(raw: dict[str, Any]) -> int | None:
 
 
 def ranked_segment(raw: dict[str, Any]) -> str:
+    """Return the exact raw league segment kept in collected Parquet shards."""
     league = ranked_league_number(raw)
     return f"ranked:league-{league}" if league is not None else "ranked:unknown"
+
+
+def ranked_league_buckets(data_config: dict[str, Any]) -> tuple[int, ...]:
+    """Validate and return configured ranked bucket edges.
+
+    Missing edges preserve the legacy one-segment-per-league behaviour, which
+    keeps checkpoints trained before ranked pooling fully compatible.
+    """
+    raw_buckets = data_config.get("ranked_league_buckets")
+    if raw_buckets is None:
+        return ()
+    try:
+        buckets = tuple(int(value) for value in raw_buckets)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("ranked_league_buckets must contain integers") from exc
+    if not buckets:
+        return ()
+    if len(buckets) < 2:
+        raise ValueError("ranked_league_buckets must contain at least two edges")
+    if any(value <= 0 for value in buckets):
+        raise ValueError("ranked_league_buckets edges must be positive")
+    if any(lower >= upper for lower, upper in pairwise(buckets)):
+        raise ValueError("ranked_league_buckets edges must be strictly increasing")
+    return buckets
+
+
+def ranked_model_segment(league: int | None, data_config: dict[str, Any]) -> str:
+    """Pool an exact ranked league into the segment learned by the model."""
+    if league is None:
+        return "ranked:unknown"
+    buckets = ranked_league_buckets(data_config)
+    for lower, upper in pairwise(buckets):
+        if lower <= league < upper:
+            return f"ranked:league-{lower}-{upper - 1}"
+    # Preserve exact out-of-range leagues and legacy configurations. This is
+    # safer than silently assigning a future league to an unrelated bucket.
+    return f"ranked:league-{league}"
 
 
 def segment_for(
@@ -186,7 +224,7 @@ def segment_for(
 ) -> str:
     mode = (mode_key or "other").lower()
     if mode == "ranked":
-        return ranked_segment(raw or {})
+        return ranked_model_segment(ranked_league_number(raw or {}), data_config)
     if mode != "ladder":
         return mode
     rank = deck.global_rank
@@ -199,7 +237,7 @@ def segment_for(
     if trophies is None:
         return "ladder:unknown"
     buckets = data_config["trophy_buckets"]
-    for lower, upper in zip(buckets, buckets[1:], strict=True):
+    for lower, upper in pairwise(buckets):
         if lower <= trophies < upper:
             return f"ladder:{lower}-{upper - 1}"
     return "ladder:overflow"
@@ -245,6 +283,10 @@ def parse_battle_row(row: dict[str, Any], data_config: dict[str, Any]) -> dict[s
     sql_league = _optional_int(row.get("league_number"))
     if mode_key == "ranked" and sql_league is not None and sql_league > 0:
         segment = f"ranked:league-{sql_league}"
+    elif mode_key == "ranked":
+        # Raw extracts keep the exact league. Pooling is applied by ``prepare``
+        # so bucket edges can change without recollecting historical battles.
+        segment = ranked_segment(raw)
     else:
         segment = segment_for(team, mode_key, data_config, raw)
     return {

@@ -4,6 +4,7 @@ import json
 import shutil
 import sys
 from datetime import datetime, timezone
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,7 @@ import duckdb
 
 from .card_stats import CARD_ELIXIR
 from .config import AppConfig
+from .domain import ranked_league_buckets
 
 
 def _quoted(path: Path) -> str:
@@ -20,6 +22,25 @@ def _quoted(path: Path) -> str:
 def _log(message: str) -> None:
     timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
     print(f"[{timestamp}] {message}", file=sys.stderr, flush=True)
+
+
+def _ranked_segment_sql(data_config: dict[str, Any]) -> str:
+    """DuckDB expression pooling exact raw leagues for model preparation."""
+    buckets = ranked_league_buckets(data_config)
+    if not buckets:
+        return "segment"
+    league = (
+        "try_cast(regexp_extract(segment, "
+        "'^ranked:league-([0-9]+)$', 1) as integer)"
+    )
+    clauses = [
+        (
+            f"when lower(mode_key) = 'ranked' and {league} >= {lower} "
+            f"and {league} < {upper} then 'ranked:league-{lower}-{upper - 1}'"
+        )
+        for lower, upper in pairwise(buckets)
+    ]
+    return "case " + " ".join(clauses) + " else segment end"
 
 
 def prepare_splits(config: AppConfig, overwrite: bool = False) -> dict[str, Any]:
@@ -34,6 +55,8 @@ def prepare_splits(config: AppConfig, overwrite: bool = False) -> dict[str, Any]
     prepared_dir.mkdir(parents=True, exist_ok=True)
 
     raw_glob = _quoted(raw_dir / "*.parquet")
+    ranked_buckets = ranked_league_buckets(config.data)
+    ranked_segment_sql = _ranked_segment_sql(config.data)
     train_fraction = float(config.data["train_fraction"])
     validation_fraction = float(config.data["validation_fraction"])
     validation_boundary = train_fraction + validation_fraction
@@ -53,13 +76,20 @@ def prepare_splits(config: AppConfig, overwrite: bool = False) -> dict[str, Any]
     # quantile, each split copy = ~5 full dedup passes over tens of millions of
     # rows), which crawls and spills RAM. The table pays the window cost once.
     _log("prepare: deduplicating raw shards by game_id")
+    if ranked_buckets:
+        labels = [
+            f"{lower}-{upper - 1}"
+            for lower, upper in pairwise(ranked_buckets)
+        ]
+        _log(f"prepare: pooling ranked leagues into {labels}")
     raw_total = connection.execute(
         f"select count(*) from read_parquet('{raw_glob}')"
     ).fetchone()[0]
     connection.execute(
         f"""
         create temporary table raw_dedup as
-        select * from read_parquet('{raw_glob}')
+        select * replace ({ranked_segment_sql} as segment)
+        from read_parquet('{raw_glob}')
         qualify row_number() over (partition by game_id order by inserted_at) = 1
         """
     )
@@ -245,6 +275,7 @@ def prepare_splits(config: AppConfig, overwrite: bool = False) -> dict[str, Any]
         "vocabulary_sizes": {key: len(value) + 1 for key, value in vocabulary.items()},
         "seeded_card_ids": seeded_ids,
         "cards_absent_from_train": untrained_cards,
+        "ranked_league_buckets": list(ranked_buckets),
         "split_policy": "chronological 70/15/15 by battle_time",
     }
     (prepared_dir / "manifest.json").write_text(

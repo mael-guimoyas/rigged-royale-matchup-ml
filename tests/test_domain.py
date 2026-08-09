@@ -7,6 +7,7 @@ from rigged_matchup_ml.domain import (
     parse_battle_row,
     parse_deck,
     ranked_league_number,
+    ranked_model_segment,
 )
 
 
@@ -34,6 +35,7 @@ DATA_CONFIG = {
     "require_exactly_eight_cards": True,
     "top_ladder_buckets": [100, 1000, 10000],
     "trophy_buckets": [0, 5000, 7000, 9000, 12000, 14000, 999999],
+    "ranked_league_buckets": [1, 3, 5, 8],
 }
 
 
@@ -93,6 +95,26 @@ def test_ranked_segment_uses_league_number() -> None:
     )
     assert record is not None
     assert record["segment"] == "ranked:league-7"
+
+
+def test_ranked_model_segment_pools_configured_leagues() -> None:
+    expected = {
+        1: "ranked:league-1-2",
+        2: "ranked:league-1-2",
+        3: "ranked:league-3-4",
+        4: "ranked:league-3-4",
+        5: "ranked:league-5-7",
+        7: "ranked:league-5-7",
+    }
+    assert {
+        league: ranked_model_segment(league, DATA_CONFIG) for league in expected
+    } == expected
+    assert ranked_model_segment(None, DATA_CONFIG) == "ranked:unknown"
+
+
+def test_ranked_model_segment_keeps_legacy_and_out_of_range_leagues_exact() -> None:
+    assert ranked_model_segment(6, {}) == "ranked:league-6"
+    assert ranked_model_segment(8, DATA_CONFIG) == "ranked:league-8"
 
 
 def test_ranked_segment_uses_sql_league_number_before_json() -> None:
