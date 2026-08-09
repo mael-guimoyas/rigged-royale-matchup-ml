@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "run_id": "runpod-2026-08-10",
-  "captured_at": "2026-08-10T00:26:25+02:00",
+  "captured_at": "2026-08-10T00:30:33+02:00",
   "status": "in_progress",
   "initialization": {
     "card2vec_init": "loaded",
@@ -10,16 +10,18 @@
   },
   "training": {
     "epochs_configured": 15,
-    "epochs_recorded": 1,
-    "epoch_1_iterations": 2552,
-    "epoch_1_duration_seconds": 185,
-    "epoch_1_iterations_per_second": 13.77,
-    "epoch_1_trailing_loss": 0.6396,
-    "epoch_1_ending_learning_rate": 0.000999
+    "epochs_recorded": 2
   },
   "epochs": [
     {
       "epoch": 1,
+      "training": {
+        "iterations": 2552,
+        "duration_seconds": 185,
+        "iterations_per_second": 13.77,
+        "trailing_loss": 0.6396,
+        "ending_learning_rate": 0.000999
+      },
       "validation": {
         "rows": 4233340,
         "win_rate": 0.5298886895179749,
@@ -33,10 +35,42 @@
         "calibration_slope": 1.0895073413848877,
         "calibration_intercept": 0.056150052696466446
       }
+    },
+    {
+      "epoch": 2,
+      "training": {
+        "iterations": 2552,
+        "duration_seconds": 327,
+        "iterations_per_second": 7.79,
+        "trailing_loss": 0.6305,
+        "ending_learning_rate": 0.000983
+      },
+      "validation": {
+        "rows": 4233340,
+        "win_rate": 0.5298886895179749,
+        "mean_prediction": 0.5198370814323425,
+        "accuracy": 0.6399738740568912,
+        "auc": 0.6966144321776615,
+        "log_loss": 0.6276240348815918,
+        "brier_score": 0.21938249468803406,
+        "expected_calibration_error": 0.010680138117544613,
+        "expected_calibration_error_quantile": 0.010305418763609001,
+        "calibration_slope": 1.0618798732757568,
+        "calibration_intercept": 0.04146666079759598
+      },
+      "delta_from_previous_validation": {
+        "accuracy": 0.0128229719323276,
+        "auc": 0.0162761873380555,
+        "log_loss": -0.0100378990173339,
+        "brier_score": -0.00451940298080444,
+        "expected_calibration_error": -0.00378445629006618,
+        "expected_calibration_error_quantile": -0.00390437529763272
+      }
     }
   ],
   "notes": [
-    "Validation metrics captured after epoch 1, before final checkpoint calibration.",
+    "Validation metrics are captured after each epoch, before final checkpoint calibration.",
+    "Epoch 2 throughput dropped from 13.77 to 7.79 iterations/s while processing the same 2552 iterations; validation quality still improved strongly.",
     "Detailed calibration-bin rows were omitted because the supplied log was truncated."
   ]
 }
