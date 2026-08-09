@@ -21,17 +21,6 @@ Sur cette configuration, prévoir environ **45 minutes pour l'entraînement**. L
 téléchargement Supabase, `prepare`, Card2Vec, l'évaluation et le benchmark s'ajoutent
 à cette durée et dépendent surtout du réseau, du CPU et du volume de shards.
 
-Dans les réglages du Pod RunPod, ajouter ces deux variables d'environnement :
-
-```text
-SUPABASE_URL=https://PROJECT_REF.supabase.co
-SUPABASE_SECRET_KEY=sb_secret_...
-```
-
-Elles sont injectées directement dans le conteneur et ne viennent jamais de Git.
-`SUPABASE_SECRET_KEY` doit rester une variable serveur : ne pas la mettre dans le
-frontend, un fichier commité ou une capture d'écran.
-
 ## 2. Tout lancer depuis un seul terminal web
 
 Ouvrir le terminal RunPod, puis exécuter les commandes suivantes dans ce même
@@ -46,8 +35,13 @@ git log -1 --oneline
 python --version
 nvidia-smi
 
-test -n "$SUPABASE_URL"
-test -n "$SUPABASE_SECRET_KEY"
+# Ne pas enregistrer la clé Supabase dans l'historique Bash.
+set +o history
+export SUPABASE_URL='https://PROJECT_REF.supabase.co'
+export SUPABASE_SECRET_KEY='COLLER_LA_CLE_SECRETE_ICI'
+set -o history
+
+test -n "$SUPABASE_URL" && test -n "$SUPABASE_SECRET_KEY"
 
 export TRAINING_BUCKET=training-battles
 export TRAINING_PREFIX=battles
@@ -64,9 +58,13 @@ export RUN_BENCHMARK=1
 bash scripts/runpod_train.sh
 ```
 
-Les deux commandes `test -n` permettent de confirmer que les variables Supabase sont
-bien injectées. Si l'une d'elles renvoie une erreur, la corriger dans les réglages du
-Pod avant de lancer le script.
+Remplacer les deux valeurs d'exemple avant d'exécuter le bloc. Ces variables existent
+uniquement dans le terminal courant et ne viennent jamais de Git. Sur le terminal
+Linux RunPod, la bonne syntaxe est `export NOM=valeur` : `set NOM=valeur` est une
+syntaxe Windows et ne transmettrait pas la variable au script.
+
+`SUPABASE_SECRET_KEY` doit rester une variable serveur : ne pas la mettre dans le
+frontend, un fichier commité ou une capture d'écran.
 
 Le script fait directement toute la chaîne :
 
