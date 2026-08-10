@@ -371,13 +371,31 @@ def require_api_key(x_api_key: str | None = Header(default=None)) -> None:
         raise HTTPException(status_code=401, detail="Invalid API key")
 
 
+def _supports_heroes(bundle: dict[str, Any] | None) -> bool:
+    """Whether the loaded checkpoint has trained Hero-form parameters.
+
+    The site fails closed on this flag (see ``runtimeFromHealth`` in
+    ``ml-inference.ts``): without it, every request is stripped of its Hero card
+    ids and a Hero deck predicts exactly like its base deck. Report it from the
+    checkpoint itself rather than a constant so an older Hero-less model keeps
+    the stripping behaviour it needs.
+    """
+    if bundle is None:
+        return False
+    state = bundle.get("model_state") or {}
+    return any("hero" in key for key in state)
+
+
 @app.get("/health")
 def health(request: Request) -> dict[str, Any]:
     bundle = getattr(request.app.state, "bundle", None)
+    supports_heroes = _supports_heroes(bundle)
     return {
         "ok": bundle is not None,
         "model_name": os.getenv("MODEL_NAME", DEFAULT_MODEL_NAME),
         "model_version": bundle.get("resolved_model_version") if bundle else None,
+        "supports_heroes": supports_heroes,
+        "capabilities": {"heroes": supports_heroes, "evolutions": bundle is not None},
     }
 
 
