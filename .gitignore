@@ -10,3 +10,7 @@ artifacts/
 logs/
 *.egg-info/
 
+
+# Unreferenced duplicate of artifacts/matchup-model.pt; the Dockerfile and
+# compose file both read the artifacts/ copy.
+/matchup-model.pt

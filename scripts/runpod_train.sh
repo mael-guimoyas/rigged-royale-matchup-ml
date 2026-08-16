@@ -61,6 +61,16 @@ cfg["training"]["gradient_accumulation_steps"] = env_int("RUNPOD_GRAD_ACCUM", 1)
 cfg["training"]["num_workers"] = env_int("RUNPOD_NUM_WORKERS", 4)
 cfg["training"]["epochs"] = env_int("RUNPOD_EPOCHS", int(cfg["training"]["epochs"]))
 
+# Ensemble member selection. The seed drives torch/numpy/random and therefore
+# initialisation, batch order and dropout masks, which is the whole diversity
+# of a deep ensemble here: card2vec is a deterministic PPMI+SVD and returns the
+# same vectors for every member, and the chronological splits must stay
+# identical across members for their scores to be comparable.
+seed = os.environ.get("RUNPOD_SEED")
+if seed not in (None, ""):
+    cfg["training"]["seed"] = int(seed)
+    print(f"seed overridden -> {int(seed)}")
+
 # Ablation toggle: RUNPOD_CARD_METADATA_DIM=0 disables the per-card metadata
 # feature entirely (the model's metadata projection is skipped when the dim is
 # 0), reproducing the pre-metadata baseline architecture for an A/B comparison.
