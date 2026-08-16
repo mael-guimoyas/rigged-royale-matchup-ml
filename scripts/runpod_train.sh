@@ -71,6 +71,20 @@ if seed not in (None, ""):
     cfg["training"]["seed"] = int(seed)
     print(f"seed overridden -> {int(seed)}")
 
+# Ensemble diversity lever. Measured on the first two members: seeds alone move
+# the panel score by only 0.0132 on the decks the optimizer emits, against a
+# model error of 0.127, because every member warm-starts from the same card
+# vectors -- card2vec is a deterministic PPMI+SVD and returns identical output
+# whatever the seed. RUNPOD_CARD2VEC_INIT=0 drops that warm start so the card
+# embeddings are actually initialised differently, which is where off-manifold
+# behaviour lives. Costs individual quality (the warm start exists because rare
+# cards otherwise start at random), so it is a diversity trade to measure, not a
+# default.
+card2vec_init = os.environ.get("RUNPOD_CARD2VEC_INIT")
+if card2vec_init not in (None, ""):
+    cfg["training"]["card2vec_init"] = card2vec_init not in ("0", "false", "False")
+    print(f"card2vec_init overridden -> {cfg['training']['card2vec_init']}")
+
 # Ablation toggle: RUNPOD_CARD_METADATA_DIM=0 disables the per-card metadata
 # feature entirely (the model's metadata projection is skipped when the dim is
 # 0), reproducing the pre-metadata baseline architecture for an A/B comparison.

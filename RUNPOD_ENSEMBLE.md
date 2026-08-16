@@ -170,17 +170,71 @@ est le nombre de points d'inflation que la séparation retire. Contrôle intégr
 lancé avec deux fois le même checkpoint, il renvoie exactement `0,0000`, ce qui
 vérifie que la mesure n'invente rien.
 
-## 6. Ce qu'on en fait ensuite
+## 6. Résultat mesuré sur les deux premiers membres — 16 août 2026
 
-Selon le résultat de la question 1, l'un ou l'autre :
+Graine 42 (checkpoint servi) contre graine 101, 198 sélections rejouées,
+32 974 decks réels comparés. **Le verdict est négatif, et il a conduit à arrêter
+le run après deux membres.**
 
-- **écart large** : servir la moyenne d'ensemble pour la sélection (elle réduit
-  le bruit que l'argmax récolte, donc elle améliore le deck choisi), et afficher
-  le score d'un membre tenu à l'écart. La correction intérimaire en ln(N) devient
-  inutile et doit être retirée.
-- **écart étroit** : garder un seul modèle pour la sélection, mais utiliser
-  quand même le second pour l'affichage, puisque la séparation ne coûte rien et
-  supprime le biais exactement.
+**Question 1 — l'écart entre membres est dix fois trop petit.**
 
-Dans les deux cas le service ML doit exposer les scores par membre, pas seulement
-la moyenne : le site a besoin de A pour choisir et de B pour afficher.
+| | écart moyen | p90 |
+|---|---|---|
+| decks émis par l'optimiseur | 0,0132 | 0,0301 |
+| decks réels | 0,0096 | 0,0208 |
+
+L'erreur du modèle sur un deck jamais vu vaut σ = 0,127. Le désaccord entre deux
+entraînements indépendants en représente environ 10 % en écart-type, soit 1 % en
+variance. Les deux modèles commettent donc quasiment la même erreur : il n'y a
+presque rien à moyenner. Le rapport émis/réels n'est que de 1,37×, alors que
+toute la prémisse était que les membres divergeraient franchement là où les
+données ne les contraignent pas.
+
+L'explication est mécanique : le score panel est déjà une moyenne pondérée sur
+100 adversaires, donc le bruit indépendant s'y annule avant tout ensemble. Ce qui
+survit à cette moyenne est systématique, et l'ensemble ne touche pas au
+systématique.
+
+**Question 2 — l'écart anti-prédit l'erreur.** Corrélation −0,0947, et la table
+par quintile est monotone à l'envers : erreur absolue 0,1548 au premier quintile
+d'écart contre 0,1277 au cinquième. Plus les membres sont en désaccord, plus la
+prédiction est juste. MC-dropout avait au moins un +0,065 inutile ; ceci est
+activement trompeur. Piste fermée.
+
+**Question 3 — la séparation retire +0,0049.** Sélectionné par A : 0,7102,
+rapporté par B : 0,7053, observé : 0,5967. C'est réel, gratuit et exact pour ce
+qu'il couvre, mais ça représente environ un dixième du biais de sélection mesuré
+à ce nombre de candidats, et 4 % de l'écart affiché brut.
+
+### Ce qu'on en fait
+
+- **Ne pas entraîner de graines supplémentaires** avec la même recette. Trois
+  graines de plus coûteraient trois heures de GPU pour un gain que la mesure
+  chiffre déjà comme négligeable.
+- **Garder le membre 101 et servir la séparation A/B** : le checkpoint est déjà
+  payé et retire 0,0049 de biais de façon exacte plutôt qu'estimée. Le service ML
+  doit alors exposer les scores par membre, pas seulement la moyenne : le site a
+  besoin de A pour choisir et de B pour afficher.
+- **La correction en `0,0148 × ln(N)` devient le levier principal**, et non plus
+  un correctif provisoire en attendant l'ensemble.
+
+### Le seul test qui peut rouvrir la piste
+
+Les deux membres partent de vecteurs de cartes **identiques** : `card2vec` est
+déterministe. La diversité mesurée ci-dessus ne vient donc que des couches
+supérieures. Entraîner une graine sans ce démarrage à chaud produit de vraies
+représentations de cartes différentes, précisément là où vit le comportement
+hors distribution :
+
+```bash
+export SEEDS="505"
+export RUNPOD_CARD2VEC_INIT=0
+bash scripts/runpod_ensemble.sh
+```
+
+Puis relancer exactement la même mesure, en comparant cette fois le membre 505
+au checkpoint servi. Deux choses à lire : l'écart de la question 1 doit monter
+nettement au-dessus de 0,0132, et l'évaluation du membre 505 ne doit pas s'être
+effondrée — le démarrage à chaud existe parce que les cartes rares partent
+autrement au hasard, donc ce membre paie sa diversité en qualité individuelle.
+Si l'écart ne bouge pas, la piste ensemble est close pour de bon.
