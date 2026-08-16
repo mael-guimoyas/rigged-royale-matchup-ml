@@ -28,6 +28,21 @@ def matchup_label(probability: float) -> str:
     return "very_good"
 
 
+def _antisymmetric_projection(
+    probability: torch.Tensor, reverse_probability: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Project a calibrated directional pair onto exact complements.
+
+    Calibration intercepts capture the oriented battle-log population, but an
+    arbitrary side must not inherit that base-rate advantage in a neutral deck
+    duel. This is the least-squares projection preserving both directions while
+    enforcing ``P(A, B) + P(B, A) = 1``.
+    """
+    pre_projection_error = (probability + reverse_probability - 1.0).abs()
+    projected = (0.5 * (probability + 1.0 - reverse_probability)).clamp(0.0, 1.0)
+    return projected, 1.0 - projected, pre_projection_error
+
+
 def load_bundle(checkpoint_path: Path) -> dict[str, Any]:
     """Load a checkpoint once and attach an eval-ready model under ``model``.
 
@@ -43,9 +58,7 @@ def load_bundle(checkpoint_path: Path) -> dict[str, Any]:
     checkpoint_hash = hashlib.sha256(checkpoint_path.read_bytes()).hexdigest()[:12]
     feature_version = payload.get("feature_version")
     payload["resolved_model_version"] = (
-        f"v{feature_version}-{checkpoint_hash}"
-        if feature_version is not None
-        else checkpoint_hash
+        f"v{feature_version}-{checkpoint_hash}" if feature_version is not None else checkpoint_hash
     )
     return payload
 
@@ -75,13 +88,8 @@ def _calibration_for_segment(bundle: dict[str, Any], segment: Any) -> tuple[floa
     return calibrated_temperature, calibrated_bias, global_temperature_raw
 
 
-def _repeat_batch(
-    batch: dict[str, torch.Tensor], count: int
-) -> dict[str, torch.Tensor]:
-    return {
-        key: value.expand(count, *value.shape[1:])
-        for key, value in batch.items()
-    }
+def _repeat_batch(batch: dict[str, torch.Tensor], count: int) -> dict[str, torch.Tensor]:
+    return {key: value.expand(count, *value.shape[1:]) for key, value in batch.items()}
 
 
 def _ablation_contributions(
@@ -156,9 +164,7 @@ def _cross_pairs(
     ranked_attention = sorted(pairs, key=lambda pair: pair["attention"], reverse=True)
     candidate_limit = max(12, top_k * 4)
     candidates = ranked_attention[:candidate_limit]
-    candidates.extend(
-        pair for pair in pairs if pair["target_position"] in required_targets
-    )
+    candidates.extend(pair for pair in pairs if pair["target_position"] in required_targets)
     by_index = {pair["flat_index"]: pair for pair in candidates}
     candidates = list(by_index.values())
     contributions = _ablation_contributions(
@@ -175,9 +181,7 @@ def _cross_pairs(
 
     selected: list[dict[str, Any]] = []
     for target_position in sorted(required_targets):
-        options = [
-            pair for pair in candidates if pair["target_position"] == target_position
-        ]
+        options = [pair for pair in candidates if pair["target_position"] == target_position]
         if options:
             selected.append(
                 max(
@@ -191,8 +195,7 @@ def _cross_pairs(
         (
             pair
             for pair in candidates
-            if pair["flat_index"] not in selected_indices
-            and pair["directional_effect"] > 0
+            if pair["flat_index"] not in selected_indices and pair["directional_effect"] > 0
         ),
         key=lambda pair: (pair["directional_effect"], pair["attention"]),
         reverse=True,
@@ -288,9 +291,7 @@ def _interactions_for_row(
         return None
 
     team_present = forward.get("team_card_present", forward["team_cards"].ne(0))
-    opponent_present = forward.get(
-        "opponent_card_present", forward["opponent_cards"].ne(0)
-    )
+    opponent_present = forward.get("opponent_card_present", forward["opponent_cards"].ne(0))
     team_valid = [bool(value) for value in team_present[0].tolist()]
     opponent_valid = [bool(value) for value in opponent_present[0].tolist()]
 
@@ -372,29 +373,41 @@ def predict_from_row(
         bundle, request["segment"]
     )
 
-    forward = _batchify(encode_row(request, vocabulary))
-    reverse = _batchify(encode_row(request, vocabulary, swapped=True))
+    device = next(model.parameters()).device
+    forward = {
+        key: value.to(device) for key, value in _batchify(encode_row(request, vocabulary)).items()
+    }
+    reverse = {
+        key: value.to(device)
+        for key, value in _batchify(encode_row(request, vocabulary, swapped=True)).items()
+    }
     with torch.no_grad():
         logit = model(forward)
         reverse_logit = model(reverse)
-        probability = float(
-            torch.sigmoid(logit / max(calibrated_temperature, 1e-4) + calibrated_bias).item()
+        calibrated_probability = torch.sigmoid(
+            logit / max(calibrated_temperature, 1e-4) + calibrated_bias
         )
-        reverse_probability = float(
-            torch.sigmoid(
-                reverse_logit / max(calibrated_temperature, 1e-4) + calibrated_bias
-            ).item()
+        calibrated_reverse_probability = torch.sigmoid(
+            reverse_logit / max(calibrated_temperature, 1e-4) + calibrated_bias
         )
+        projected, projected_reverse, calibration_symmetry_error = _antisymmetric_projection(
+            calibrated_probability, calibrated_reverse_probability
+        )
+        probability = float(projected.item())
+        reverse_probability = float(projected_reverse.item())
         raw_probability = float(torch.sigmoid(logit).item())
         raw_reverse_probability = float(torch.sigmoid(reverse_logit).item())
 
     result: dict[str, Any] = {
         "team_win_probability": probability,
         "opponent_win_probability": reverse_probability,
+        "pre_projection_team_win_probability": float(calibrated_probability.item()),
+        "pre_projection_opponent_win_probability": float(calibrated_reverse_probability.item()),
         "raw_team_win_probability": raw_probability,
         "raw_opponent_win_probability": raw_reverse_probability,
         "matchup_label": matchup_label(probability),
         "symmetry_error": abs((probability + reverse_probability) - 1.0),
+        "calibration_symmetry_error": float(calibration_symmetry_error.item()),
         "raw_symmetry_error": abs((raw_probability + raw_reverse_probability) - 1.0),
         "segment": request["segment"],
         "patch": request["patch"],
@@ -442,20 +455,33 @@ def predict_from_rows(
 
     model = bundle["model"]
     vocabulary = bundle["vocabulary"]
-    forward = encode_rows(requests, vocabulary)
-    reverse = encode_rows(requests, vocabulary, swapped=[True] * len(requests))
+    device = next(model.parameters()).device
+    forward = {
+        key: value.to(device, non_blocking=device.type == "cuda")
+        for key, value in encode_rows(requests, vocabulary).items()
+    }
+    reverse = {
+        key: value.to(device, non_blocking=device.type == "cuda")
+        for key, value in encode_rows(requests, vocabulary, swapped=[True] * len(requests)).items()
+    }
     temperatures = torch.tensor(
-        [item[0] for item in calibrations], dtype=torch.float32
+        [item[0] for item in calibrations], dtype=torch.float32, device=device
     ).clamp_min(1e-4)
-    biases = torch.tensor([item[1] for item in calibrations], dtype=torch.float32)
+    biases = torch.tensor([item[1] for item in calibrations], dtype=torch.float32, device=device)
 
     with torch.no_grad():
         logits = model(forward)
         reverse_logits = model(reverse)
-        probabilities = torch.sigmoid(logits / temperatures + biases).cpu().tolist()
-        reverse_probabilities = torch.sigmoid(
-            reverse_logits / temperatures + biases
-        ).cpu().tolist()
+        calibrated_probabilities = torch.sigmoid(logits / temperatures + biases)
+        calibrated_reverse_probabilities = torch.sigmoid(reverse_logits / temperatures + biases)
+        pre_projection_probabilities = calibrated_probabilities.cpu().tolist()
+        pre_projection_reverse_probabilities = calibrated_reverse_probabilities.cpu().tolist()
+        projected, projected_reverse, calibration_symmetry_errors = _antisymmetric_projection(
+            calibrated_probabilities, calibrated_reverse_probabilities
+        )
+        probabilities = projected.cpu().tolist()
+        reverse_probabilities = projected_reverse.cpu().tolist()
+        calibration_symmetry_errors = calibration_symmetry_errors.cpu().tolist()
         raw_probabilities = torch.sigmoid(logits).cpu().tolist()
         raw_reverse_probabilities = torch.sigmoid(reverse_logits).cpu().tolist()
 
@@ -463,25 +489,28 @@ def predict_from_rows(
         {
             "team_win_probability": probability,
             "opponent_win_probability": reverse_probability,
+            "pre_projection_team_win_probability": pre_projection_probability,
+            "pre_projection_opponent_win_probability": pre_projection_reverse_probability,
             "raw_team_win_probability": raw_probability,
             "raw_opponent_win_probability": raw_reverse_probability,
             "matchup_label": matchup_label(probability),
             "symmetry_error": abs((probability + reverse_probability) - 1.0),
-            "raw_symmetry_error": abs(
-                (raw_probability + raw_reverse_probability) - 1.0
-            ),
+            "calibration_symmetry_error": calibration_symmetry_error,
+            "raw_symmetry_error": abs((raw_probability + raw_reverse_probability) - 1.0),
             "segment": request["segment"],
             "patch": request["patch"],
             "temperature": calibration[0],
             "bias": calibration[1],
             "global_temperature": calibration[2],
         }
-        for request, calibration, probability, reverse_probability,
-        raw_probability, raw_reverse_probability in zip(
+        for request, calibration, probability, reverse_probability, pre_projection_probability, pre_projection_reverse_probability, calibration_symmetry_error, raw_probability, raw_reverse_probability in zip(
             requests,
             calibrations,
             probabilities,
             reverse_probabilities,
+            pre_projection_probabilities,
+            pre_projection_reverse_probabilities,
+            calibration_symmetry_errors,
             raw_probabilities,
             raw_reverse_probabilities,
             strict=True,

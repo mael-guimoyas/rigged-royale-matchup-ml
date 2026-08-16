@@ -127,9 +127,9 @@ def probability_to_label(probability: float) -> str:
     return "neutral"
 
 
-def probability_to_confidence(probability: float, has_context: bool) -> str:
+def probability_to_confidence(probability: float) -> str:
     distance = abs(probability - 0.5)
-    if not has_context or distance < 0.04:
+    if distance < 0.04:
         return "low"
     if distance >= 0.12:
         return "high"
@@ -250,13 +250,9 @@ def request_to_row(request: MatchupRequest, bundle: dict[str, Any]) -> dict[str,
         "team_card_ids": team_cards,
         "opponent_card_ids": opponent_cards,
         "team_evolution_levels": [1 if card in team_evos else 0 for card in team_cards],
-        "opponent_evolution_levels": [
-            1 if card in opponent_evos else 0 for card in opponent_cards
-        ],
+        "opponent_evolution_levels": [1 if card in opponent_evos else 0 for card in opponent_cards],
         "team_hero_levels": [1 if card in team_heroes else 0 for card in team_cards],
-        "opponent_hero_levels": [
-            1 if card in opponent_heroes else 0 for card in opponent_cards
-        ],
+        "opponent_hero_levels": [1 if card in opponent_heroes else 0 for card in opponent_cards],
         "team_card_roles": roles_for(team_cards, team_heroes),
         "opponent_card_roles": roles_for(opponent_cards, opponent_heroes),
         "team_tower_troop_id": request.team_tower_troop_id,
@@ -273,10 +269,6 @@ def response_from_result(
     result: dict[str, Any],
 ) -> PredictionResponse:
     probability = max(0.0, min(1.0, float(result["team_win_probability"])))
-    has_context = (
-        request.team_avg_card_level is not None
-        and request.opponent_avg_card_level is not None
-    )
     model_version = bundle.get("resolved_model_version")
 
     interactions = result.get("interactions")
@@ -292,7 +284,7 @@ def response_from_result(
     return PredictionResponse(
         win_probability=round(probability, 6),
         matchup_label=probability_to_label(probability),
-        confidence=probability_to_confidence(probability, has_context),
+        confidence=probability_to_confidence(probability),
         model_run_id=None,
         model_name=os.getenv("MODEL_NAME", DEFAULT_MODEL_NAME).strip() or DEFAULT_MODEL_NAME,
         model_version=model_version,
@@ -301,6 +293,7 @@ def response_from_result(
             "patch": result["patch"],
             "raw_win_probability": round(float(result["raw_team_win_probability"]), 6),
             "symmetry_error": round(float(result["symmetry_error"]), 6),
+            "calibration_symmetry_error": round(float(result["calibration_symmetry_error"]), 6),
             "temperature": result["temperature"],
             "bias": result["bias"],
         },
@@ -311,9 +304,7 @@ def response_from_result(
 
 def build_response(bundle: dict[str, Any], request: MatchupRequest) -> PredictionResponse:
     row = request_to_row(request, bundle)
-    result = predict_from_row(
-        bundle, row, include_interactions=request.include_interactions
-    )
+    result = predict_from_row(bundle, row, include_interactions=request.include_interactions)
     return response_from_result(bundle, request, result)
 
 
@@ -324,21 +315,15 @@ def build_batch_response(
     rows = [request_to_row(item, bundle) for item in payload.requests]
     results: list[dict[str, Any] | None] = [None] * len(rows)
     regular_indices = [
-        index
-        for index, item in enumerate(payload.requests)
-        if not item.include_interactions
+        index for index, item in enumerate(payload.requests) if not item.include_interactions
     ]
-    regular_results = predict_from_rows(
-        bundle, [rows[index] for index in regular_indices]
-    )
+    regular_results = predict_from_rows(bundle, [rows[index] for index in regular_indices])
     for index, result in zip(regular_indices, regular_results, strict=True):
         results[index] = result
 
     for index, item in enumerate(payload.requests):
         if item.include_interactions:
-            results[index] = predict_from_row(
-                bundle, rows[index], include_interactions=True
-            )
+            results[index] = predict_from_row(bundle, rows[index], include_interactions=True)
 
     return BatchPredictionResponse(
         predictions=[
@@ -412,9 +397,7 @@ def predict(request: Request, payload: MatchupRequest) -> PredictionResponse:
     response_model=BatchPredictionResponse,
     dependencies=[Depends(require_api_key)],
 )
-def predict_batch(
-    request: Request, payload: BatchMatchupRequest
-) -> BatchPredictionResponse:
+def predict_batch(request: Request, payload: BatchMatchupRequest) -> BatchPredictionResponse:
     bundle = getattr(request.app.state, "bundle", None)
     if bundle is None:  # pragma: no cover - lifespan always loads it
         raise HTTPException(status_code=503, detail="Model not loaded")

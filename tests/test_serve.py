@@ -6,7 +6,6 @@ import pytest
 
 from rigged_matchup_ml.serve import (
     MatchupRequest,
-    build_response,
     default_segment,
     latest_patch,
     probability_to_confidence,
@@ -27,8 +26,26 @@ FAKE_VOCAB = {
 
 # A web-shaped request (mirrors riggedroyale ml-inference.ts PredictRequest).
 WEB_PAYLOAD = {
-    "team_card_ids": [26000000, 26000030, 26000021, 26000014, 27000006, 28000000, 28000011, 26000064],
-    "opponent_card_ids": [26000055, 26000011, 26000007, 26000012, 27000003, 28000001, 28000004, 26000018],
+    "team_card_ids": [
+        26000000,
+        26000030,
+        26000021,
+        26000014,
+        27000006,
+        28000000,
+        28000011,
+        26000064,
+    ],
+    "opponent_card_ids": [
+        26000055,
+        26000011,
+        26000007,
+        26000012,
+        27000003,
+        28000001,
+        28000004,
+        26000018,
+    ],
     "mode_key": "ladder",
     "team_tower_troop_id": 159000000,
     "opponent_tower_troop_id": 159000000,
@@ -95,9 +112,7 @@ def test_request_to_row_routes_ranked_leagues_to_trained_groups() -> None:
         7: "ranked:league-5-7",
     }
     for league, segment in expected.items():
-        request = MatchupRequest(
-            **{**WEB_PAYLOAD, "mode_key": "ranked", "league_number": league}
-        )
+        request = MatchupRequest(**{**WEB_PAYLOAD, "mode_key": "ranked", "league_number": league})
         assert request_to_row(request, bundle)["segment"] == segment
 
 
@@ -113,9 +128,7 @@ def test_request_to_row_keeps_legacy_exact_ranked_checkpoint_compatible() -> Non
             "top_ladder_buckets": [100, 1000, 10000],
         },
     }
-    request = MatchupRequest(
-        **{**WEB_PAYLOAD, "mode_key": "ranked", "league_number": 6}
-    )
+    request = MatchupRequest(**{**WEB_PAYLOAD, "mode_key": "ranked", "league_number": 6})
     assert request_to_row(request, bundle)["segment"] == "ranked:league-6"
 
 
@@ -124,7 +137,14 @@ def test_request_to_row_reconstructs_champion_and_hero_roles() -> None:
     payload = {
         **WEB_PAYLOAD,
         "team_card_ids": [
-            26000074, 26000030, 26000021, 26000014, 27000006, 28000000, 28000011, 26000064,
+            26000074,
+            26000030,
+            26000021,
+            26000014,
+            27000006,
+            28000000,
+            28000011,
+            26000064,
         ],
         "team_evolution_card_ids": [],
         "team_hero_card_ids": [26000064],
@@ -148,11 +168,9 @@ def test_probability_to_label_three_class() -> None:
 
 
 def test_probability_to_confidence() -> None:
-    assert probability_to_confidence(0.50, has_context=True) == "low"
-    assert probability_to_confidence(0.70, has_context=True) == "high"
-    assert probability_to_confidence(0.57, has_context=True) == "medium"
-    # Missing average levels => always low confidence.
-    assert probability_to_confidence(0.90, has_context=False) == "low"
+    assert probability_to_confidence(0.50) == "low"
+    assert probability_to_confidence(0.70) == "high"
+    assert probability_to_confidence(0.57) == "medium"
 
 
 # --- integration tests against a synthesized, code-matching checkpoint ---------
@@ -169,9 +187,10 @@ def _make_checkpoint(path: Path) -> None:
     from rigged_matchup_ml.card_stats import CARD_METADATA_VECTOR_SIZE
     from rigged_matchup_ml.model import SymmetricMatchupModel
 
-    cards = {str(cid): i + 1 for i, cid in enumerate(
-        WEB_PAYLOAD["team_card_ids"] + WEB_PAYLOAD["opponent_card_ids"]
-    )}
+    cards = {
+        str(cid): i + 1
+        for i, cid in enumerate(WEB_PAYLOAD["team_card_ids"] + WEB_PAYLOAD["opponent_card_ids"])
+    }
     vocabulary = {
         "cards": cards,
         "towers": {"159000000": 1},
@@ -203,7 +222,12 @@ def _make_checkpoint(path: Path) -> None:
             "vocabulary": vocabulary,
             "temperature": 1.0,
             "segment_temperatures": {},
-            "calibration": {},
+            # A real fitted checkpoint carries a non-zero intercept. The served
+            # probability must remain antisymmetric after applying it.
+            "calibration": {
+                "global": {"temperature": 0.9, "bias": 0.2},
+                "segments": {},
+            },
             "feature_version": 5,
         },
         path,
@@ -242,8 +266,8 @@ def test_predict_returns_valid_contract(client) -> None:
     assert body["matchup_label"] in {"bad", "neutral", "good"}
     assert body["confidence"] in {"low", "medium", "high"}
     assert body["explanation"]["segment"] == "ladder:9000-11999"
-    # Antisymmetric model => self-symmetry error is essentially zero.
-    assert body["explanation"]["symmetry_error"] < 1e-3
+    assert body["explanation"]["symmetry_error"] == 0.0
+    assert body["explanation"]["calibration_symmetry_error"] > 0.0
 
 
 def test_predict_is_antisymmetric_across_swap(client) -> None:
@@ -258,9 +282,20 @@ def test_predict_is_antisymmetric_across_swap(client) -> None:
         "opponent_evolution_card_ids": WEB_PAYLOAD["team_evolution_card_ids"],
     }
     swapped = client.post("/predict", json=swapped_payload).json()
-    assert forward["win_probability"] + swapped["win_probability"] == pytest.approx(
-        1.0, abs=1e-3
-    )
+    assert forward["win_probability"] + swapped["win_probability"] == pytest.approx(1.0, abs=1e-6)
+
+
+def test_predict_self_matchup_is_exactly_neutral(client) -> None:
+    payload = {
+        **WEB_PAYLOAD,
+        "opponent_card_ids": WEB_PAYLOAD["team_card_ids"],
+        "opponent_tower_troop_id": WEB_PAYLOAD["team_tower_troop_id"],
+        "opponent_evolution_card_ids": WEB_PAYLOAD["team_evolution_card_ids"],
+        "opponent_hero_card_ids": WEB_PAYLOAD.get("team_hero_card_ids", []),
+    }
+    body = client.post("/predict", json=payload).json()
+    assert body["win_probability"] == 0.5
+    assert body["matchup_label"] == "neutral"
 
 
 def test_predict_rejects_duplicate_cards(client) -> None:
@@ -336,9 +371,7 @@ def test_predict_batch_matches_single_predict(client) -> None:
         single = client.post("/predict", json=payload).json()
         # The batched pass must be numerically identical to the single-row path,
         # not merely close: the site mixes both and caches the results.
-        assert prediction["win_probability"] == pytest.approx(
-            single["win_probability"], abs=1e-6
-        )
+        assert prediction["win_probability"] == pytest.approx(single["win_probability"], abs=1e-6)
         assert prediction["matchup_label"] == single["matchup_label"]
         assert prediction["confidence"] == single["confidence"]
         assert prediction["model_version"] == single["model_version"]
@@ -353,9 +386,7 @@ def test_predict_batch_preserves_request_order(client) -> None:
         {**WEB_PAYLOAD, "team_trophies": 10000},
         {**WEB_PAYLOAD, "mode_key": "ranked", "league_number": 3},
     ]
-    predictions = client.post("/predict/batch", json={"requests": payloads}).json()[
-        "predictions"
-    ]
+    predictions = client.post("/predict/batch", json={"requests": payloads}).json()["predictions"]
     segments = [prediction["explanation"]["segment"] for prediction in predictions]
     assert segments == ["ladder:5000-6999", "ladder:9000-11999", "ranked:unknown"]
 
@@ -366,9 +397,7 @@ def test_predict_batch_routes_interaction_requests_to_the_single_path(client) ->
         {**WEB_PAYLOAD, "include_interactions": True},
         _rotated_payload(2),
     ]
-    predictions = client.post("/predict/batch", json={"requests": payloads}).json()[
-        "predictions"
-    ]
+    predictions = client.post("/predict/batch", json={"requests": payloads}).json()["predictions"]
     assert len(predictions) == 3
     # Only the opted-in row carries attributions, and it stays in position 1.
     assert predictions[0]["card_interactions"] is None
@@ -387,9 +416,9 @@ def test_predict_batch_stays_antisymmetric(client) -> None:
     predictions = client.post(
         "/predict/batch", json={"requests": [WEB_PAYLOAD, swapped_payload]}
     ).json()["predictions"]
-    assert predictions[0]["win_probability"] + predictions[1][
-        "win_probability"
-    ] == pytest.approx(1.0, abs=1e-3)
+    assert predictions[0]["win_probability"] + predictions[1]["win_probability"] == pytest.approx(
+        1.0, abs=1e-3
+    )
 
 
 def test_predict_batch_rejects_empty_and_oversized(client) -> None:
