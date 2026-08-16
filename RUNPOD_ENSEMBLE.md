@@ -218,13 +218,17 @@ qu'il couvre, mais ça représente environ un dixième du biais de sélection me
 - **La correction en `0,0148 × ln(N)` devient le levier principal**, et non plus
   un correctif provisoire en attendant l'ensemble.
 
-### Le seul test qui peut rouvrir la piste
+### Les deux tests qui peuvent rouvrir la piste
 
-Les deux membres partent de vecteurs de cartes **identiques** : `card2vec` est
-déterministe. La diversité mesurée ci-dessus ne vient donc que des couches
-supérieures. Entraîner une graine sans ce démarrage à chaud produit de vraies
-représentations de cartes différentes, précisément là où vit le comportement
-hors distribution :
+Chacun coûte environ une heure de GPU, et chacun se lit avec exactement la même
+mesure qu'à l'étape 5 : on compare le nouveau membre au checkpoint servi et on
+regarde si l'écart de la question 1 dépasse nettement 0,0132.
+
+**Test 1 — sans le démarrage à chaud des cartes.** Les deux membres actuels
+partent de vecteurs de cartes **identiques**, `card2vec` étant déterministe, donc
+toute la diversité mesurée vient des couches supérieures. Retirer ce démarrage à
+chaud produit de vraies représentations de cartes différentes, précisément là où
+vit le comportement hors distribution.
 
 ```bash
 export SEEDS="505"
@@ -232,9 +236,36 @@ export RUNPOD_CARD2VEC_INIT=0
 bash scripts/runpod_ensemble.sh
 ```
 
-Puis relancer exactement la même mesure, en comparant cette fois le membre 505
-au checkpoint servi. Deux choses à lire : l'écart de la question 1 doit monter
-nettement au-dessus de 0,0132, et l'évaluation du membre 505 ne doit pas s'être
-effondrée — le démarrage à chaud existe parce que les cartes rares partent
-autrement au hasard, donc ce membre paie sa diversité en qualité individuelle.
-Si l'écart ne bouge pas, la piste ensemble est close pour de bon.
+Vérifier aussi que l'évaluation du membre 505 ne s'est pas effondrée : le
+démarrage à chaud existe parce que les cartes rares partiraient autrement au
+hasard, donc ce membre paie sa diversité en qualité individuelle.
+
+**Test 2 — le bagging.** Celui-ci répond à une deuxième question en même temps :
+**faut-il collecter plus de batailles ?** Un membre bagué s'entraîne sur les
+row-groups tirés **avec remise**, donc il diffère par les données vues et non
+seulement par son initialisation.
+
+```bash
+export SEEDS="606 707"
+export BOOTSTRAP=1
+bash scripts/runpod_ensemble.sh
+```
+
+Lecture du résultat :
+
+- **les membres bagués divergent nettement plus que 0,0132** : l'erreur est
+  portée par les données. Un ensemble sert vraiment, et collecter davantage la
+  réduira. C'est le seul scénario où une nouvelle collecte est justifiée ;
+- **ils divergent autant, c'est-à-dire presque pas** : l'erreur est portée par
+  l'architecture et le corpus tel qu'il est. Ni les graines, ni le bagging, ni
+  plus de données n'y changeront quoi que ce soit, et il faut chercher du côté
+  du modèle. Dans ce cas la piste ensemble est close pour de bon.
+
+Le tirage est un bootstrap **par blocs** : les lignes ne peuvent pas être
+rééchantillonnées une par une sans renoncer au streaming, et sur une coupure
+chronologique le bloc est de toute façon la bonne unité. Il est stable d'une
+époque à l'autre — un tirage renouvelé à chaque passe finirait par montrer tout
+le corpus au membre et ne mesurerait plus rien — et seul le chargeur
+d'entraînement est rééchantillonné, validation et test restant entiers pour que
+les membres restent comparables. `tests/test_bootstrap_sampling.py` fixe ces
+propriétés.

@@ -82,6 +82,11 @@ model:
 
 training:
   seed: 42
+  # Bagging for ensemble members: draw the training row groups with replacement
+  # under this seed so members differ by the data they saw, not only by their
+  # initialisation. null trains on the whole split. Only the train loader is
+  # resampled; validation and test stay whole so members remain comparable.
+  bootstrap_seed: null
   epochs: 15
   batch_size: 2048
   evaluation_batch_size: 4096

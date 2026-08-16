@@ -85,6 +85,18 @@ if card2vec_init not in (None, ""):
     cfg["training"]["card2vec_init"] = card2vec_init not in ("0", "false", "False")
     print(f"card2vec_init overridden -> {cfg['training']['card2vec_init']}")
 
+# Bagging. Seed-only members disagreed by 0.0132 against a model error of 0.127,
+# so the training process contributes almost none of that error. Drawing the
+# training row groups with replacement makes members differ by the data they
+# saw instead, which answers two questions at once: whether an ensemble can help
+# at all, and whether collecting more battles would reduce the error. If
+# bootstrap members diverge much more than seed-only ones, the error is carried
+# by the data and more of it pays; if they do not, it is the architecture.
+bootstrap_seed = os.environ.get("RUNPOD_BOOTSTRAP_SEED")
+if bootstrap_seed not in (None, ""):
+    cfg["training"]["bootstrap_seed"] = int(bootstrap_seed)
+    print(f"bootstrap_seed overridden -> {int(bootstrap_seed)}")
+
 # Ablation toggle: RUNPOD_CARD_METADATA_DIM=0 disables the per-card metadata
 # feature entirely (the model's metadata projection is skipped when the dim is
 # 0), reproducing the pre-metadata baseline architecture for an A/B comparison.

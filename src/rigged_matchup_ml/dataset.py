@@ -664,6 +664,7 @@ class BatchedMatchupIterableDataset(IterableDataset):
         seed: int,
         batch_size: int,
         scan_batch_size: int = 65_536,
+        bootstrap_seed: int | None = None,
     ) -> None:
         super().__init__()
         self.split_dir = split_dir
@@ -673,11 +674,32 @@ class BatchedMatchupIterableDataset(IterableDataset):
         self.seed = seed
         self.batch_size = batch_size
         self.scan_batch_size = max(scan_batch_size, batch_size)
+        self.bootstrap_seed = bootstrap_seed
         self._epoch = 0
         self._context: _EncodeContext | None = None
 
     def _fragments(self) -> list:
+        """Row groups this worker will read, bootstrap-resampled when asked.
+
+        Bagging draws a corpus with replacement so ensemble members see
+        different data rather than only different initialisations. Rows cannot
+        be resampled individually without giving up streaming, so the draw is
+        over row groups — a block bootstrap, which is the right variant anyway
+        on a chronologically ordered split.
+
+        The draw is seeded by ``bootstrap_seed`` alone, deliberately not by the
+        epoch or the worker: a member has to see the *same* resampled corpus on
+        every pass, otherwise it just sees all the data with extra noise and the
+        comparison against a seed-only member measures nothing. Resampling
+        happens before the worker shard so every worker agrees on the draw.
+        """
         fragments = _fragments_by_row_group(self.split_dir)
+        if self.bootstrap_seed is not None and fragments:
+            draw = np.random.default_rng(self.bootstrap_seed)
+            fragments = [
+                fragments[index]
+                for index in draw.integers(0, len(fragments), size=len(fragments))
+            ]
         worker = get_worker_info()
         if worker is not None:
             fragments = fragments[worker.id :: worker.num_workers]
@@ -723,6 +745,7 @@ def matchup_dataloader(
     seed: int,
     batch_size: int,
     num_workers: int,
+    bootstrap_seed: int | None = None,
 ) -> DataLoader:
     dataset = BatchedMatchupIterableDataset(
         split_dir,
@@ -731,6 +754,7 @@ def matchup_dataloader(
         augment_swap=augment_swap,
         seed=seed,
         batch_size=batch_size,
+        bootstrap_seed=bootstrap_seed,
     )
     loader_options = {
         "batch_size": None,

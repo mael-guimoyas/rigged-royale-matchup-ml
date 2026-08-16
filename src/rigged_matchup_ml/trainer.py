@@ -154,6 +154,10 @@ def _loader(
     batch_size = int(config.training["batch_size"])
     if not training:
         batch_size = int(config.training.get("evaluation_batch_size", batch_size))
+    # Bagging applies to the training corpus only. Validation and test must stay
+    # the whole held-out splits, or members are no longer comparable and the
+    # metrics stop meaning the same thing between runs.
+    bootstrap_seed = config.training.get("bootstrap_seed") if training else None
     return matchup_dataloader(
         prepared_dir / split,
         vocabulary,
@@ -162,6 +166,7 @@ def _loader(
         seed=int(config.training["seed"]),
         batch_size=batch_size,
         num_workers=int(config.training["num_workers"]),
+        bootstrap_seed=None if bootstrap_seed is None else int(bootstrap_seed),
     )
 
 

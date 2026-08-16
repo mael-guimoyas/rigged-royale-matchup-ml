@@ -21,6 +21,11 @@ SEEDS="${SEEDS:-101 202 303 404}"
 # per-member benchmark is off by default. The evaluation stays on: it is what
 # proves each member is individually sound rather than a failed run.
 RUN_BENCHMARK="${RUN_BENCHMARK:-0}"
+# BOOTSTRAP=1 turns each member into a bagged one: it trains on the training row
+# groups drawn with replacement under its own seed, so members differ by the data
+# they saw and not only by their initialisation. Use it when the question is
+# whether more data would help, not merely whether averaging helps.
+BOOTSTRAP="${BOOTSTRAP:-0}"
 export DATA_ROOT RUN_BENCHMARK
 
 log_step() {
@@ -35,7 +40,13 @@ for seed in $SEEDS; do
     log_step "seed $seed already trained at $target, skipping"
     continue
   fi
-  log_step "=== training ensemble member, seed $seed ==="
+  if [[ "$BOOTSTRAP" == "1" ]]; then
+    log_step "=== training bagged member, seed $seed ==="
+    export RUNPOD_BOOTSTRAP_SEED="$seed"
+  else
+    log_step "=== training ensemble member, seed $seed ==="
+    unset RUNPOD_BOOTSTRAP_SEED
+  fi
   mkdir -p "$target"
   RUNPOD_SEED="$seed" \
   ARTIFACT_DIR="$target" \
