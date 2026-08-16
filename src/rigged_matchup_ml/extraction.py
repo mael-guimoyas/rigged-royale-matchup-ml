@@ -38,6 +38,29 @@ SCHEMA = pa.schema(
         ("opponent_card_roles", pa.list_(pa.int8())),
         ("team_tower_troop_id", pa.int64()),
         ("opponent_tower_troop_id", pa.int64()),
+        # Both players' standing at the start of the battle.
+        #
+        # `parse_deck` has always read these off the API payload, but only the
+        # team's reached the row, and only to pick a segment label. Dropping the
+        # opponent's made the sample's own shape invisible: battles enter the
+        # corpus one player at a time (/players/{tag}/battlelog), so `team` is
+        # always the queried player and `opponent` is whoever they happened to
+        # face. How much stronger the queried player is than that field varies by
+        # bucket -- it wins 63.5% of its games in ladder:5000-6999 and 37.2% in
+        # ladder:14000-999998 -- and popular decks sit disproportionately on the
+        # second side, which is why the most-played decks read 9 to 24 points low.
+        #
+        # With both standings on the row that skew is measurable and correctable
+        # instead of inferred, and the trophy gap becomes a real feature: the
+        # serving API has accepted `trophy_diff` and the average card levels all
+        # along, and they are inert precisely because training never saw them.
+        #
+        # Nullable: shards written before this carry no such column, and pyarrow
+        # reads them back as null rather than refusing the dataset.
+        ("team_starting_trophies", pa.int32()),
+        ("opponent_starting_trophies", pa.int32()),
+        ("team_global_rank", pa.int32()),
+        ("opponent_global_rank", pa.int32()),
         ("team_deck_key", pa.string()),
         ("opponent_deck_key", pa.string()),
         ("matrix_prior", pa.float32()),

@@ -307,6 +307,12 @@ def parse_battle_row(row: dict[str, Any], data_config: dict[str, Any]) -> dict[s
         "opponent_card_roles": [card.role for card in opponent.cards],
         "team_tower_troop_id": team.tower_troop_id,
         "opponent_tower_troop_id": opponent.tower_troop_id,
+        # Kept for both sides, not just the one the segment label is derived
+        # from: see the SCHEMA note in extraction.py for what their absence hid.
+        "team_starting_trophies": team.starting_trophies,
+        "opponent_starting_trophies": opponent.starting_trophies,
+        "team_global_rank": team.global_rank,
+        "opponent_global_rank": opponent.global_rank,
         "team_deck_key": team.key,
         "opponent_deck_key": opponent.key,
         "matrix_prior": 0.5,
