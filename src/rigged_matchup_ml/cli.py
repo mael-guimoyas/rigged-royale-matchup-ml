@@ -94,8 +94,29 @@ def collect_api(
     balance: bool = typer.Option(
         True,
         "--balance/--no-balance",
-        help="Steer the crawl toward trophy bands under-represented on disk "
-        "(scans existing shards at startup to find the gaps).",
+        help="Allow the deficit blend to read existing shards for its baseline. "
+        "Only matters with --deficit-bias above 0.",
+    ),
+    deficit_bias: float = typer.Option(
+        0.0,
+        "--deficit-bias",
+        min=0.0,
+        max=1.0,
+        help="Fraction of fetches aimed at the trophy band with the least data "
+        "instead of drawn in proportion to real play. 0 keeps the corpus "
+        "representative, which is what training needs; raise it only for a "
+        "deliberate coverage top-up, and expect the deck rates in those bands "
+        "to skew.",
+    ),
+    min_hop: int = typer.Option(
+        1,
+        "--min-hop",
+        min=0,
+        help="Drop battles from players fewer than N hops from a seed. Seeds are "
+        "hop 0 (a tags file, or public.players -- the site's own visitors), and "
+        "their battles would enter from the team side and drag down every deck "
+        "they face. Hop 1 and beyond are opponents the game's matchmaker chose. "
+        "Use 0 to keep everything, 2 to also drop the seeds' direct opponents.",
     ),
     api_token_mode: str = typer.Option(
         "1",
@@ -142,6 +163,8 @@ def collect_api(
         min_trophies=min_trophies,
         max_age_days=max_age_days,
         balance=balance,
+        deficit_bias=deficit_bias,
+        min_hop=min_hop,
         api_token_mode=api_token_mode,
         show_progress=progress,
         stats_interval_seconds=stats_interval,

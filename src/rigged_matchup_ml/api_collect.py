@@ -341,17 +341,45 @@ def _scan_existing_segment_counts(raw_dir: Path) -> Counter[str]:
 
 
 class BalancedFrontier:
-    """Trophy-aware crawl frontier that steers fetches toward starved segments.
+    """Trophy-aware crawl frontier.
 
     Snowballed opponents are bucketed by the trophy band they were discovered at
-    (ladder) or pooled as ``ranked`` (Path of Legends hides trophies). `next_tag`
-    always serves the *neediest* tracked band first -- the one with the fewest
-    battles accepted so far (seeded from existing shards) -- so request budget is
-    spent where data is missing instead of re-walking the saturated 12000+ core
-    that produced ~1h of near-zero `accepted`.
+    (ladder) or pooled as ``ranked`` (Path of Legends hides trophies). Ladder
+    candidates below `min_trophies` are dropped outright: queueing them only
+    bloats the queue and burns requests on duplicates we'd discard anyway.
 
-    Ladder candidates below `min_trophies` are dropped outright: queueing them
-    only bloats the queue and burns requests on duplicates we'd discard anyway.
+    Who gets fetched decides what the corpus measures
+    ------------------------------------------------
+    A battle only enters the corpus if one of its two players was fetched, and
+    the fetched player is always the ``team`` side. So if the fetched population
+    is atypical, every deck played mostly by *other* people is recorded from the
+    losing side of that gap, and reads too low. Measured on the shards this
+    class produced: the fetched side won 63.5% of its games in ladder:5000-6999
+    and 37.2% in ladder:14000-999998, and the 20 most-played decks of every
+    ladder segment came out 9 to 24 points below what they score against
+    comparable opponents.
+
+    This frontier used to serve the *neediest* band first -- fewest battles
+    accepted so far, seeded from existing shards -- so request budget went where
+    data was missing. That is efficient for coverage and ruinous for
+    representativeness: aiming at the bands you know least about means fetching
+    the players who are most atypical *for those bands*, the ones passing
+    through rather than the ones who live there. A control collection with the
+    steering disabled moved the fetched side's win rate from 37.2-63.5% to
+    45.8-57.6%.
+
+    So bands are now served in proportion to how often the matchmaker actually
+    produces them -- which is what queue length already measures, since every
+    queued tag is an opponent the game paired someone with -- and a band's tag is
+    drawn uniformly instead of oldest-first. `deficit_bias` restores a slice of
+    the old behaviour for a deliberately unbalanced top-up run; it defaults to
+    off, and anything above 0 trades representativeness for coverage.
+
+    Seed players are excluded from the corpus by default (`min_hop`): they come
+    from a tags file or from `public.players`, i.e. the site's own visitors, who
+    are self-selected. Their opponents are not -- those are drawn by the game's
+    matchmaker, which is the closest thing to a random active player this API
+    offers.
     """
 
     def __init__(
@@ -361,13 +389,22 @@ class BalancedFrontier:
         min_trophies: int,
         baseline_counts: Counter[str],
         max_queued: int | None,
+        deficit_bias: float = 0.0,
+        rng: random.Random | None = None,
     ) -> None:
         self._buckets = buckets
         self._min_trophies = min_trophies
         self._max_queued = max_queued
+        self._deficit_bias = max(0.0, min(1.0, deficit_bias))
+        self._rng = rng or random.Random()
         self._seed_queue: deque[str] = deque(seeds)
-        self._queues: dict[str, deque[str]] = {}
+        # Lists, not deques: a uniform draw needs random access, and removing the
+        # chosen tag by swapping in the last element keeps that O(1).
+        self._queues: dict[str, list[str]] = {}
         self._queued: set[str] = set(seeds)
+        # How many hops from a seed each queued tag is. Seeds are 0, the
+        # opponents they met are 1, and so on.
+        self._hops: dict[str, int] = dict.fromkeys(seeds, 0)
         self._counts: Counter[str] = Counter(baseline_counts)
         self._tracked = ["ranked"] + [
             f"ladder:{lower}-{upper - 1}"
@@ -390,10 +427,15 @@ class BalancedFrontier:
     def record_accept(self, segment: str) -> None:
         self._counts[segment] += 1
 
-    def add(self, candidates: list[tuple[str, str, int | None]]) -> int:
+    def add(
+        self,
+        candidates: list[tuple[str, str, int | None]],
+        discovered_by: str | None = None,
+    ) -> int:
         """Queue new candidates by prospective band. Returns count skipped as low."""
         skipped = 0
         active_queued = self.queue_size()
+        hop = self._hops.get(discovered_by, 0) + 1 if discovered_by is not None else 1
         for tag, mode_key, trophies in candidates:
             if self._max_queued is not None and active_queued >= self._max_queued:
                 break
@@ -404,25 +446,70 @@ class BalancedFrontier:
                 skipped += 1
                 continue
             self._queued.add(tag)
-            self._queues.setdefault(bucket, deque()).append(tag)
+            self._hops[tag] = hop
+            self._queues.setdefault(bucket, []).append(tag)
             active_queued += 1
         return skipped
 
+    def hop_of(self, tag: str) -> int:
+        """Hops from a seed. 0 is a seed itself; 1 is someone a seed played."""
+        return self._hops.get(tag, 0)
+
+    def _pick_bucket(self) -> str | None:
+        """A band, drawn in proportion to how much play it actually represents.
+
+        Queue length is that measure already: a tag is queued because the
+        matchmaker paired someone with it, so a band accumulates candidates at
+        the rate the game produces them. `deficit_bias` blends in the old
+        starvation ordering for a top-up run that knowingly wants coverage over
+        representativeness.
+        """
+        live = [(bucket, len(queue)) for bucket, queue in self._queues.items() if queue]
+        if not live:
+            return None
+        if self._deficit_bias > 0:
+            worst = min(self._score(bucket) for bucket, _ in live)
+            starved = [bucket for bucket, _ in live if self._score(bucket) == worst]
+            if starved and self._rng.random() < self._deficit_bias:
+                return self._rng.choice(starved)
+        total = sum(size for _, size in live)
+        draw = self._rng.randrange(total)
+        for bucket, size in live:
+            if draw < size:
+                return bucket
+            draw -= size
+        return live[-1][0]
+
     def next_tag(self) -> str | None:
-        # Serve the neediest band first; if its queue is dry, spend a seed to
-        # discover more players (likely feeding deficits) before falling through.
-        for bucket in sorted(self._tracked, key=self._score):
-            queue = self._queues.get(bucket)
-            if queue:
-                return queue.popleft()
-            if self._seed_queue:
-                return self._seed_queue.popleft()
-        if self._seed_queue:
+        bucket = self._pick_bucket()
+        if bucket is None:
+            return self._seed_queue.popleft() if self._seed_queue else None
+        # Seeds are spent only to open new ground: once a band has candidates of
+        # its own, fetching another seed would just re-add the visitors' bias.
+        if self._seed_queue and self._rng.random() < self._seed_share():
             return self._seed_queue.popleft()
-        for queue in self._queues.values():
-            if queue:
-                return queue.popleft()
-        return None
+        # Uniform draw, removed by swapping the last element into its place, so a
+        # band is not walked in discovery order.
+        queue = self._queues[bucket]
+        return self._swap_out(queue, self._rng.randrange(len(queue)))
+
+    @staticmethod
+    def _swap_out(queue: list[str], index: int) -> str:
+        """Remove and return queue[index] in O(1), order not preserved."""
+        tag = queue[index]
+        queue[index] = queue[-1]
+        queue.pop()
+        return tag
+
+    def _seed_share(self) -> float:
+        """How often to spend a seed rather than a discovered tag.
+
+        Small and fixed: seeds exist to reach parts of the ladder the snowball
+        has not touched, not to supply the corpus. Their own battles are dropped
+        anyway when `min_hop` is 1 or more.
+        """
+        queued = sum(len(queue) for queue in self._queues.values())
+        return 1.0 if queued == 0 else 0.02
 
     def queue_size(self) -> int:
         return len(self._seed_queue) + sum(len(queue) for queue in self._queues.values())
@@ -851,6 +938,8 @@ def collect_from_api(
     min_trophies: int | None = None,
     max_age_days: float | None = None,
     balance: bool = True,
+    deficit_bias: float = 0.0,
+    min_hop: int = 1,
     api_token_mode: str = "1",
     show_progress: bool = True,
     stats_interval_seconds: float = 10.0,
@@ -899,13 +988,24 @@ def collect_from_api(
         max_queued = max_queue
     else:
         max_queued = max_players * 4 if max_players is not None else DEFAULT_MAX_QUEUE
-    frontier = BalancedFrontier(seeds, trophy_buckets, min_trophies, baseline_counts, max_queued)
+    # `--balance` is the legacy switch for the starvation ordering; it now only
+    # decides whether the deficit blend gets a baseline to work from, and the
+    # blend itself is off unless deficit_bias is raised.
+    frontier = BalancedFrontier(
+        seeds,
+        trophy_buckets,
+        min_trophies,
+        baseline_counts,
+        max_queued,
+        deficit_bias=deficit_bias if balance else 0.0,
+    )
 
     buffer: list[dict[str, Any]] = []
     summary = {
         "players_processed": 0,
         "battles_seen": 0,
         "battles_accepted": 0,
+        "battles_skipped_seed_hop": 0,
         "shards_written": 0,
         "uploaded": 0,
         "seed_tags": len(seeds),
@@ -1033,7 +1133,7 @@ def collect_from_api(
             while inflight:
                 done, _ = wait(list(inflight), return_when=FIRST_COMPLETED)
                 for future in done:
-                    inflight.pop(future)
+                    tag = inflight.pop(future)
                     try:
                         records, candidates, seen, stale = future.result()
                     except Exception as error:  # noqa: BLE001 - never kill the crawl
@@ -1046,14 +1146,24 @@ def collect_from_api(
                     summary["players_processed"] += 1
                     summary["battles_seen"] += seen
                     summary["battles_skipped_stale"] += stale
-                    accepted = deduplicator.keep_new(records)
-                    summary["battles_accepted"] += len(accepted)
-                    buffer.extend(accepted)
-                    for record in accepted:
-                        frontier.record_accept(record["segment"])
-                        run_by_segment[record["segment"]] += 1
+                    # A seed's own battles are dropped: seeds come from a tags
+                    # file or from public.players -- the site's own visitors, a
+                    # self-selected population whose battles would enter the
+                    # corpus from the `team` side and skew every deck they meet.
+                    # Their opponents are kept: those the matchmaker chose.
+                    if frontier.hop_of(tag) < min_hop:
+                        summary["battles_skipped_seed_hop"] += len(records)
+                    else:
+                        accepted = deduplicator.keep_new(records)
+                        summary["battles_accepted"] += len(accepted)
+                        buffer.extend(accepted)
+                        for record in accepted:
+                            frontier.record_accept(record["segment"])
+                            run_by_segment[record["segment"]] += 1
                     if snowball:
-                        summary["candidates_skipped_low"] += frontier.add(candidates)
+                        summary["candidates_skipped_low"] += frontier.add(
+                            candidates, discovered_by=tag
+                        )
                     if len(buffer) >= shard_size:
                         flush()
                     if show_progress:

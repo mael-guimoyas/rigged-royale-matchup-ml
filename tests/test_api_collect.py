@@ -1,3 +1,4 @@
+import random
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 
@@ -399,16 +400,94 @@ def test_normalize_baseline_folds_legacy_blob_onto_current_buckets() -> None:
     assert aligned["ranked:league-3"] == 50
 
 
-def test_frontier_serves_neediest_band_first() -> None:
-    # 5000-6999 is starved on disk; the frontier should pop it before the
-    # saturated 12000-13999 band even though both are queued.
+def test_frontier_ignores_disk_deficit_by_default() -> None:
+    # 5000-6999 is starved on disk, but chasing that deficit is what made the
+    # fetched population atypical for exactly the bands it aimed at. With the
+    # default bias the two queued tags are equally likely, so over many draws
+    # both bands come up.
+    baseline = Counter({"ladder:5000-6999": 10, "ladder:12000-13999": 10_000})
+    seen: set[str] = set()
+    for seed in range(40):
+        frontier = BalancedFrontier(
+            seeds=[],
+            buckets=BUCKETS,
+            min_trophies=5000,
+            baseline_counts=baseline,
+            max_queued=None,
+            rng=random.Random(seed),
+        )
+        frontier.add([("#HIGH", "ladder", 13000), ("#NEEDY", "ladder", 6000)])
+        seen.add(frontier.next_tag() or "")
+    assert seen == {"#HIGH", "#NEEDY"}
+
+
+def test_frontier_deficit_bias_restores_starvation_order() -> None:
     baseline = Counter({"ladder:5000-6999": 10, "ladder:12000-13999": 10_000})
     frontier = BalancedFrontier(
-        seeds=[], buckets=BUCKETS, min_trophies=5000, baseline_counts=baseline, max_queued=None
+        seeds=[],
+        buckets=BUCKETS,
+        min_trophies=5000,
+        baseline_counts=baseline,
+        max_queued=None,
+        deficit_bias=1.0,
+        rng=random.Random(0),
     )
     frontier.add([("#HIGH", "ladder", 13000), ("#NEEDY", "ladder", 6000)])
     assert frontier.next_tag() == "#NEEDY"
     assert frontier.next_tag() == "#HIGH"
+
+
+def test_frontier_draws_a_band_in_proportion_to_its_queue() -> None:
+    # Queue length is how much play a band really represents: a tag is only
+    # queued because the matchmaker paired someone with it.
+    frontier = BalancedFrontier(
+        seeds=[],
+        buckets=BUCKETS,
+        min_trophies=5000,
+        baseline_counts=Counter(),
+        max_queued=None,
+        rng=random.Random(7),
+    )
+    frontier.add([(f"#H{index}", "ladder", 13000) for index in range(90)])
+    frontier.add([(f"#L{index}", "ladder", 6000) for index in range(10)])
+    drawn = [frontier.next_tag() for _ in range(100)]
+    high = sum(1 for tag in drawn if tag and tag.startswith("#H"))
+    assert 80 <= high <= 98
+
+
+def test_frontier_does_not_walk_a_band_in_discovery_order() -> None:
+    tags = [f"#T{index}" for index in range(20)]
+    orders = set()
+    for seed in range(5):
+        frontier = BalancedFrontier(
+            seeds=[],
+            buckets=BUCKETS,
+            min_trophies=5000,
+            baseline_counts=Counter(),
+            max_queued=None,
+            rng=random.Random(seed),
+        )
+        frontier.add([(tag, "ladder", 13000) for tag in tags])
+        orders.add(tuple(frontier.next_tag() for _ in tags))
+    assert len(orders) > 1
+    assert all(sorted(order) == sorted(tags) for order in orders)
+
+
+def test_frontier_tracks_hops_from_the_seed() -> None:
+    frontier = BalancedFrontier(
+        seeds=["#SEED"],
+        buckets=BUCKETS,
+        min_trophies=5000,
+        baseline_counts=Counter(),
+        max_queued=None,
+        rng=random.Random(0),
+    )
+    frontier.add([("#MET", "ladder", 13000)], discovered_by="#SEED")
+    frontier.add([("#FAR", "ladder", 13000)], discovered_by="#MET")
+
+    assert frontier.hop_of("#SEED") == 0
+    assert frontier.hop_of("#MET") == 1
+    assert frontier.hop_of("#FAR") == 2
 
 
 def test_frontier_bootstraps_from_seeds_when_bands_empty() -> None:
