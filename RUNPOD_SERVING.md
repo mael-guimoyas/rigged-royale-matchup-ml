@@ -229,11 +229,16 @@ curl -i localhost:8080/ping   # doit renvoyer 200 sans corps
   mégaoctets de VRAM ; la marge au-delà d'un GPU d'entrée de gamme est payée sans
   être utilisée. Ce qui compte pour ce modèle, c'est la latence de lancement des
   noyaux, pas la puissance de calcul brute.
-- **Exposed HTTP port** : `80` — la valeur que RunPod passe dans `$PORT`, sur
-  lequel l'image écoute. Laisser `PORT_HEALTH` non défini : le conteneur répond
-  au sondage sur le même port que le trafic.
-- **Health check path** : `/ping`. Déjà le défaut RunPod ; la route existe dans
-  `serve.py` et renvoie 200 quand le modèle est chargé, 204 sinon.
+- **Exposed HTTP port** : `8080`, **et** `PORT=8080` dans les variables
+  d'environnement. RunPod injecte `$PORT` de lui-même, mais déclarer les deux
+  supprime toute ambiguïté sur le port réellement écouté. Laisser `PORT_HEALTH`
+  non défini : le conteneur répond au sondage sur le même port que le trafic.
+- **Container disk** : `20 GB`. Les 5 Go proposés par défaut ne suffisent pas —
+  la roue torch CUDA tire cuBLAS, cuDNN et le reste des bibliothèques NVIDIA.
+- **Health check path** : **`/ping`**, à corriger explicitement — le formulaire
+  propose `/health`, qui répond 200 même modèle non chargé (avec `ok: false`
+  dans le corps) et ferait donc router du trafic vers un worker pas prêt.
+  `/ping` renvoie 204 tant que le modèle n'est pas chargé, 200 ensuite.
 - **Workers** : `min 0` / `max 1` pour commencer. Passer `min 1` si les
   démarrages à froid restent gênants malgré FlashBoot.
 - **Idle timeout** : au moins la durée d'un balayage complet.
@@ -242,6 +247,7 @@ Variables d'environnement de l'endpoint :
 
 | Variable | Valeur | Rôle |
 | --- | --- | --- |
+| `PORT` | `8080` | Port écouté, aligné sur le port HTTP exposé. |
 | `MODEL_DEVICE` | `auto` | Prend le GPU s'il est visible, retombe sur CPU sinon. Mettre `cuda` pour rendre l'absence de GPU bruyante. |
 | `MODEL_WARMUP` | `1` | Lot à vide au démarrage, pour que le contexte CUDA soit payé avant le trafic. |
 | `MAX_BATCH_REQUESTS` | `2048` | Plafond d'un `/predict/batch`. Doit être ≥ `ML_INFERENCE_BATCH_SIZE` du site. |
