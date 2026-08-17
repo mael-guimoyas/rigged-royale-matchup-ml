@@ -6,10 +6,13 @@ from pathlib import Path
 from typing import Iterator
 
 import numpy as np
-import pyarrow.compute as pc
-import pyarrow.dataset as pads
 import torch
 from torch.utils.data import DataLoader, IterableDataset, get_worker_info
+
+# pyarrow is imported lazily, inside the two training-only functions that read
+# Parquet. The inference server imports this module for its encoders and never
+# touches a shard, so keeping pyarrow off the import path saves ~100 ms of
+# container start and lets the serving image skip the dependency entirely.
 
 from .card_stats import (
     CARD_ELIXIR,
@@ -79,6 +82,8 @@ def _normalise_form_arrays(
 
 def _fragments_by_row_group(split_dir: Path) -> list:
     fragments = []
+    import pyarrow.dataset as pads
+
     for fragment in pads.dataset(split_dir, format="parquet").get_fragments():
         split_by_row_group = getattr(fragment, "split_by_row_group", None)
         if split_by_row_group is None:
@@ -498,6 +503,8 @@ def _lookup_metadata(
 
 def _list_matrix(column, width: int = 8) -> np.ndarray:
     """A list<int> arrow column -> dense (n, width) int64, truncated/zero-padded."""
+    import pyarrow.compute as pc
+
     count = len(column)
     out = np.zeros((count, width), dtype=np.int64)
     if count == 0:
@@ -609,6 +616,168 @@ def _assemble_batch(
             dtype = np.int64
         tensors[key] = torch.from_numpy(np.ascontiguousarray(value, dtype=dtype))
     return tensors
+
+
+# ---------------------------------------------------------------------------
+# Vectorised encoding for serving.
+#
+# The training path above decodes a pyarrow RecordBatch. Inference receives a
+# list of Python dicts instead (see serve.request_to_row), so it went through
+# encode_rows -- the per-row Python loop -- which costs more than the model's
+# own forward pass once that forward moves to a GPU. These helpers run the same
+# whole-column numpy decode over dict rows and reuse _assemble_batch, so their
+# output is identical to encode_rows (guarded by
+# test_vectorised_serving_encoder_matches_encode_rows).
+# ---------------------------------------------------------------------------
+
+
+def build_encode_context(vocabulary: dict[str, dict[str, int]]) -> _EncodeContext:
+    """Build the reusable lookup tables once, to be held for the process lifetime.
+
+    Constructing these tables walks the whole card metadata table and expands
+    every card into its four forms, so it must not happen per request. The
+    inference bundle builds one at load time and passes it to every call.
+    """
+    return _EncodeContext(vocabulary)
+
+
+def _row_matrix(rows: list[dict], key: str, width: int = 8) -> np.ndarray:
+    """Stack a per-row list field into a dense (n, width) int64 matrix.
+
+    The fast path hands numpy a rectangular list of lists and lets its own C
+    converter do the work; the fallback pads rows that are short or long, which
+    is what :func:`_fixed_length` does on the per-row path.
+    """
+    values = [row[key] for row in rows]
+    if all(len(value) == width for value in values):
+        return np.asarray(values, dtype=np.int64)
+    out = np.zeros((len(values), width), dtype=np.int64)
+    for index, value in enumerate(values):
+        length = min(len(value), width)
+        if length:
+            out[index, :length] = value[:length]
+    return out
+
+
+def _string_column(rows: list[dict], key: str) -> np.ndarray:
+    """A row field as the string array the vocabulary lookups expect.
+
+    ``str(None)`` becomes ``"None"``, misses the vocabulary and maps to 0 —
+    exactly what ``vocabulary.get(str(value), 0)`` does on the per-row path for
+    a request that carries no tower.
+    """
+    return np.array([str(row[key]) for row in rows], dtype=str)
+
+
+def _decode_rows(rows: list[dict], context: _EncodeContext) -> dict[str, np.ndarray]:
+    """Dict-row counterpart of :func:`_decode_batch`; no swap applied."""
+    team_raw = _row_matrix(rows, "team_card_ids")
+    opponent_raw = _row_matrix(rows, "opponent_card_ids")
+    team_evos, team_heroes, team_roles = _normalise_form_arrays(
+        _row_matrix(rows, "team_evolution_levels"),
+        _row_matrix(rows, "team_hero_levels"),
+        _row_matrix(rows, "team_card_roles"),
+    )
+    opponent_evos, opponent_heroes, opponent_roles = _normalise_form_arrays(
+        _row_matrix(rows, "opponent_evolution_levels"),
+        _row_matrix(rows, "opponent_hero_levels"),
+        _row_matrix(rows, "opponent_card_roles"),
+    )
+    return {
+        "team_cards": _lookup(team_raw, context.card_keys, context.card_values),
+        "opponent_cards": _lookup(opponent_raw, context.card_keys, context.card_values),
+        "team_elixir": _lookup(team_raw, context.elixir_keys, context.elixir_values),
+        "opponent_elixir": _lookup(opponent_raw, context.elixir_keys, context.elixir_values),
+        "team_card_metadata": _lookup_metadata(
+            team_raw,
+            team_evos,
+            team_heroes,
+            context.metadata_keys,
+            context.metadata_values,
+            context.unknown_metadata,
+        ),
+        "opponent_card_metadata": _lookup_metadata(
+            opponent_raw,
+            opponent_evos,
+            opponent_heroes,
+            context.metadata_keys,
+            context.metadata_values,
+            context.unknown_metadata,
+        ),
+        "team_card_present": team_raw > 0,
+        "opponent_card_present": opponent_raw > 0,
+        "team_evos": team_evos,
+        "opponent_evos": opponent_evos,
+        "team_heroes": team_heroes,
+        "opponent_heroes": opponent_heroes,
+        "team_roles": team_roles,
+        "opponent_roles": opponent_roles,
+        "team_tower": _lookup(
+            _string_column(rows, "team_tower_troop_id"),
+            context.tower_keys,
+            context.tower_values,
+        ),
+        "opponent_tower": _lookup(
+            _string_column(rows, "opponent_tower_troop_id"),
+            context.tower_keys,
+            context.tower_values,
+        ),
+        "segment": _lookup(
+            _string_column(rows, "segment"), context.segment_keys, context.segment_values
+        ),
+        "patch": _lookup(
+            _string_column(rows, "patch"), context.patch_keys, context.patch_values
+        ),
+        "win": np.asarray(
+            [float(bool(row.get("win", False))) for row in rows], dtype=np.float32
+        ),
+        "matrix_prior": np.asarray(
+            [float(row.get("matrix_prior", 0.5)) for row in rows], dtype=np.float32
+        ),
+    }
+
+
+def encode_rows_vectorised(
+    rows: list[dict],
+    vocabulary: dict[str, dict[str, int]],
+    context: _EncodeContext | None = None,
+    swapped: list[bool] | None = None,
+) -> dict[str, torch.Tensor]:
+    """Drop-in vectorised replacement for :func:`encode_rows` on dict rows."""
+    if not rows:
+        return encode_rows(rows, vocabulary, swapped=swapped)
+    context = context if context is not None else build_encode_context(vocabulary)
+    decoded = _decode_rows(rows, context)
+    swap = (
+        np.zeros(len(rows), dtype=bool)
+        if swapped is None
+        else np.asarray(swapped, dtype=bool)
+    )
+    return _assemble_batch(decoded, swap, 0, len(rows))
+
+
+def encode_rows_both_directions(
+    rows: list[dict],
+    vocabulary: dict[str, dict[str, int]],
+    context: _EncodeContext | None = None,
+) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+    """Encode a batch and its opponent-as-team mirror, decoding the rows once.
+
+    The antisymmetric prediction needs both directions of every row. They differ
+    only by which side occupies the team fields, so the expensive part — the card
+    vocabulary, elixir and per-form metadata lookups — is shared and only the
+    cheap final assembly runs twice. That halves the encoding cost of a batch
+    prediction relative to calling the encoder once per direction.
+    """
+    if not rows:
+        empty = encode_rows(rows, vocabulary)
+        return empty, empty
+    context = context if context is not None else build_encode_context(vocabulary)
+    decoded = _decode_rows(rows, context)
+    count = len(rows)
+    forward = _assemble_batch(decoded, np.zeros(count, dtype=bool), 0, count)
+    reverse = _assemble_batch(decoded, np.ones(count, dtype=bool), 0, count)
+    return forward, reverse
 
 
 class MatchupIterableDataset(IterableDataset):

@@ -2,9 +2,14 @@
 .env.*
 !.env.example
 .venv/
+# A second environment holding the CUDA build of torch, for testing the GPU
+# serving path locally without disturbing the CPU one.
+.venv-gpu/
 __pycache__/
 .pytest_cache/
 .ruff_cache/
+# setuptools leaves this behind on a local `pip install .`
+build/
 data/
 artifacts/
 logs/

@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 import torch
 
 from .card_stats import metadata_for
-from .dataset import encode_row, encode_rows
+from .dataset import build_encode_context, encode_row, encode_rows_both_directions
 from .model import SymmetricMatchupModel
 
 
@@ -43,18 +44,53 @@ def _antisymmetric_projection(
     return projected, 1.0 - projected, pre_projection_error
 
 
-def load_bundle(checkpoint_path: Path) -> dict[str, Any]:
+def resolve_device(name: str | None = None) -> torch.device:
+    """Pick the device inference runs on, from an explicit name or ``MODEL_DEVICE``.
+
+    ``"auto"`` (the default, and what an unset ``MODEL_DEVICE`` means) takes CUDA
+    when a usable GPU is visible and falls back to CPU otherwise, so the same
+    image serves a netcup CPU container and a RunPod GPU worker without a config
+    change. An explicit ``"cuda"`` that cannot be honoured falls back to CPU with
+    a warning rather than refusing to boot: a serving container that answers
+    slowly beats one that never becomes healthy.
+    """
+    requested = (name or os.getenv("MODEL_DEVICE", "auto") or "auto").strip().lower()
+    if requested in ("", "auto"):
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if requested.startswith("cuda") and not torch.cuda.is_available():
+        print(
+            f"MODEL_DEVICE={requested!r} requested but no CUDA device is visible; "
+            "falling back to CPU inference.",
+            flush=True,
+        )
+        return torch.device("cpu")
+    return torch.device(requested)
+
+
+def load_bundle(checkpoint_path: Path, device: torch.device | str | None = None) -> dict[str, Any]:
     """Load a checkpoint once and attach an eval-ready model under ``model``.
 
     The returned bundle is the raw checkpoint payload (vocabulary, calibration,
     temperatures, model_config, ...) plus a ready ``SymmetricMatchupModel``. Pass
     it to :func:`predict_from_row` for each request so the model is loaded once.
+
+    The model is placed on ``device`` (see :func:`resolve_device`) and the choice
+    is recorded under ``bundle["device"]``. The prediction functions read the
+    device off the model's own parameters, so nothing else has to be told about
+    it. Weights are always read into CPU memory first, which keeps a checkpoint
+    saved from a GPU training run loadable on a CPU-only host.
     """
+    resolved = device if isinstance(device, torch.device) else resolve_device(device)
     payload = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     model = SymmetricMatchupModel(**payload["model_config"])
     model.load_state_dict(payload["model_state"])
     model.eval()
+    model.to(resolved)
     payload["model"] = model
+    payload["device"] = str(resolved)
+    # Lookup tables for the vectorised encoder. Building them walks the whole
+    # card metadata table, so it happens once here rather than per request.
+    payload["encode_context"] = build_encode_context(payload["vocabulary"])
     checkpoint_hash = hashlib.sha256(checkpoint_path.read_bytes()).hexdigest()[:12]
     feature_version = payload.get("feature_version")
     payload["resolved_model_version"] = (
@@ -456,22 +492,33 @@ def predict_from_rows(
     model = bundle["model"]
     vocabulary = bundle["vocabulary"]
     device = next(model.parameters()).device
-    forward = {
-        key: value.to(device, non_blocking=device.type == "cuda")
-        for key, value in encode_rows(requests, vocabulary).items()
-    }
-    reverse = {
-        key: value.to(device, non_blocking=device.type == "cuda")
-        for key, value in encode_rows(requests, vocabulary, swapped=[True] * len(requests)).items()
+    # One decode for both directions: the mirror shares every vocabulary and
+    # metadata lookup with the forward pass and differs only in which side sits
+    # in the team fields.
+    forward_cpu, reverse_cpu = encode_rows_both_directions(
+        requests, vocabulary, bundle.get("encode_context")
+    )
+    # Both directions travel and run as one 2N-row batch rather than two N-row
+    # ones. Every row is independent inside the model, so stacking them is
+    # arithmetically identical, and it halves both the host-to-device transfers
+    # and the kernel launches — which is most of the cost on a GPU for a model
+    # this small, where each individual kernel finishes almost instantly.
+    non_blocking = device.type == "cuda"
+    combined = {
+        key: torch.cat((value, reverse_cpu[key]), dim=0).to(device, non_blocking=non_blocking)
+        for key, value in forward_cpu.items()
     }
     temperatures = torch.tensor(
         [item[0] for item in calibrations], dtype=torch.float32, device=device
     ).clamp_min(1e-4)
     biases = torch.tensor([item[1] for item in calibrations], dtype=torch.float32, device=device)
 
-    with torch.no_grad():
-        logits = model(forward)
-        reverse_logits = model(reverse)
+    # inference_mode over no_grad: it also skips version-counter bookkeeping on
+    # every tensor, which is pure overhead for a forward-only service.
+    with torch.inference_mode():
+        stacked_logits = model(combined)
+        logits = stacked_logits[: len(requests)]
+        reverse_logits = stacked_logits[len(requests) :]
         calibrated_probabilities = torch.sigmoid(logits / temperatures + biases)
         calibrated_reverse_probabilities = torch.sigmoid(reverse_logits / temperatures + biases)
         pre_projection_probabilities = calibrated_probabilities.cpu().tolist()
@@ -516,6 +563,53 @@ def predict_from_rows(
             strict=True,
         )
     ]
+
+
+def warm_up_bundle(bundle: dict[str, Any], batch_size: int = 32) -> bool:
+    """Run one throwaway batch so the first real request is not the slow one.
+
+    On CPU this is close to free. On CUDA it is the point of the exercise: the
+    first forward pass pays for context creation, kernel loading and cuBLAS
+    workspace allocation, which is seconds of latency that would otherwise land
+    on whichever request happens to reach a freshly started worker. Serverless
+    GPU workers start and stop constantly, so that first request is a recurring
+    event rather than a one-off.
+
+    Uses real vocabulary entries so the embedding lookups match production
+    shapes. Returns whether the pass succeeded; a failure is logged and
+    swallowed, because a warm-up problem must not stop the service from booting.
+    """
+    try:
+        vocabulary = bundle["vocabulary"]
+        card_ids = [int(card) for card in list(vocabulary["cards"])[:16]]
+        if len(card_ids) < 16:
+            return False
+        towers = [int(tower) for tower in list(vocabulary["towers"])[:1]] or [0]
+        row = {
+            "team_card_ids": card_ids[:8],
+            "opponent_card_ids": card_ids[8:16],
+            "team_evolution_levels": [0] * 8,
+            "opponent_evolution_levels": [0] * 8,
+            "team_hero_levels": [0] * 8,
+            "opponent_hero_levels": [0] * 8,
+            "team_card_roles": [0] * 8,
+            "opponent_card_roles": [0] * 8,
+            "team_tower_troop_id": towers[0],
+            "opponent_tower_troop_id": towers[0],
+            "segment": next(iter(vocabulary["segments"]), ""),
+            "patch": next(iter(vocabulary["patches"]), ""),
+        }
+        predict_from_rows(bundle, [dict(row) for _ in range(max(1, batch_size))])
+        device = next(bundle["model"].parameters()).device
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
+        return True
+    # Deliberately blind: a warm-up is an optimisation, and no failure mode of it
+    # -- CUDA OOM, a stale vocabulary, a driver hiccup -- justifies refusing to
+    # serve. The real request path reports its own errors normally.
+    except Exception as error:  # noqa: BLE001  # pragma: no cover - never fatal
+        print(f"Model warm-up failed ({error}); serving anyway.", flush=True)
+        return False
 
 
 def predict_payload(checkpoint_path: Path, input_path: Path) -> dict[str, Any]:

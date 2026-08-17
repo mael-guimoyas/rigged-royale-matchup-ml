@@ -19,12 +19,18 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from pydantic import BaseModel, Field, field_validator
 
 from .card_stats import CHAMPION_CARD_IDS
 from .domain import ROLE_CHAMPION, ROLE_HERO, ROLE_NORMAL, Deck, segment_for
-from .predictor import load_bundle, predict_from_row, predict_from_rows
+from .predictor import (
+    load_bundle,
+    predict_from_row,
+    predict_from_rows,
+    resolve_device,
+    warm_up_bundle,
+)
 
 DEFAULT_CHECKPOINT = "artifacts/matchup-model.pt"
 DEFAULT_MODEL_NAME = "symmetric-matchup"
@@ -108,8 +114,28 @@ class PredictionResponse(BaseModel):
     synergies: list[CardInteraction] | None = None
 
 
+def _max_batch_requests() -> int:
+    """Hard cap on one ``/predict/batch`` payload.
+
+    Read once at import, because pydantic bakes the bound into the model class.
+    The cap exists to keep a single request from monopolising the service and to
+    bound its memory, not to tune throughput — the caller picks the actual batch
+    size. Raise it when the site raises ``ML_INFERENCE_BATCH_SIZE``; the two must
+    move together or the larger payloads bounce with a 422.
+    """
+    try:
+        return max(1, int(os.getenv("MAX_BATCH_REQUESTS", "2048")))
+    except ValueError:
+        return 2048
+
+
+MAX_BATCH_REQUESTS = _max_batch_requests()
+
+
 class BatchMatchupRequest(BaseModel):
-    requests: list[MatchupRequest] = Field(..., min_length=1, max_length=512)
+    requests: list[MatchupRequest] = Field(
+        ..., min_length=1, max_length=MAX_BATCH_REQUESTS
+    )
 
 
 class BatchPredictionResponse(BaseModel):
@@ -341,9 +367,23 @@ def _checkpoint_path() -> Path:
     return Path(os.getenv("MODEL_CHECKPOINT", DEFAULT_CHECKPOINT))
 
 
+def _warm_up_enabled() -> bool:
+    """Whether to burn one throwaway batch at startup. On by default.
+
+    Worth turning off (``MODEL_WARMUP=0``) only when boot time matters more than
+    first-request latency — which is the opposite of the serverless GPU case.
+    """
+    return (os.getenv("MODEL_WARMUP", "1") or "1").strip().lower() not in ("0", "false", "no")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.bundle = load_bundle(_checkpoint_path())
+    device = resolve_device()
+    bundle = load_bundle(_checkpoint_path(), device=device)
+    print(f"Matchup model loaded on device={bundle['device']}", flush=True)
+    if _warm_up_enabled():
+        warm_up_bundle(bundle)
+    app.state.bundle = bundle
     yield
 
 
@@ -371,6 +411,24 @@ def _supports_heroes(bundle: dict[str, Any] | None) -> bool:
     return any("hero" in key for key in state)
 
 
+@app.get("/ping")
+def ping(request: Request) -> Response:
+    """Readiness probe for a RunPod load-balancing endpoint.
+
+    RunPod's load balancer polls this path (override it with ``HEALTH_CHECK_PATH``)
+    and reads only the status code: 200 means the worker may receive traffic, 204
+    means it is still initialising, anything else means unhealthy. It must stay
+    unauthenticated — the balancer sends no API key — and stay cheap, since it is
+    polled continuously for every running worker.
+
+    The model loads during FastAPI's lifespan, so in practice the socket is not
+    accepting connections until the bundle is ready; the 204 branch covers the
+    case where the app is reachable without one.
+    """
+    bundle = getattr(request.app.state, "bundle", None)
+    return Response(status_code=200 if bundle is not None else 204)
+
+
 @app.get("/health")
 def health(request: Request) -> dict[str, Any]:
     bundle = getattr(request.app.state, "bundle", None)
@@ -381,6 +439,13 @@ def health(request: Request) -> dict[str, Any]:
         "model_version": bundle.get("resolved_model_version") if bundle else None,
         "supports_heroes": supports_heroes,
         "capabilities": {"heroes": supports_heroes, "evolutions": bundle is not None},
+        # Which device actually served the request, so a GPU worker that silently
+        # fell back to CPU is visible from the outside instead of only in logs.
+        "device": bundle.get("device") if bundle else None,
+        # The largest payload /predict/batch will accept. Published so a caller
+        # sending oversized batches can be diagnosed from /health rather than
+        # from a wall of 422s.
+        "max_batch_requests": MAX_BATCH_REQUESTS,
     }
 
 

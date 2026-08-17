@@ -1,0 +1,34 @@
+# Local GPU inference service, for checking the CUDA image before pushing it to
+# RunPod. Needs the NVIDIA container toolkit on the host.
+#
+#   docker compose -f docker-compose.gpu.yml up --build
+#   curl localhost:8080/health   # -> "device": "cuda:0"
+#
+# The CPU service in docker-compose.yml is unchanged and still the default.
+services:
+  matchup-inference-gpu:
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+    ports:
+      - "8080:8080"
+    environment:
+      MODEL_CHECKPOINT: /app/artifacts/matchup-model.pt
+      MODEL_NAME: symmetric-matchup
+      MODEL_DEVICE: auto
+      MODEL_WARMUP: "1"
+      # Must be at least the site's ML_INFERENCE_BATCH_SIZE: an oversized
+      # payload is rejected with a 422, never split.
+      MAX_BATCH_REQUESTS: "2048"
+      # PREDICT_API_KEY: set to require an X-API-Key header (must match the site).
+    volumes:
+      # Swap checkpoints without rebuilding, same as the CPU compose file.
+      - ./artifacts:/app/artifacts:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped

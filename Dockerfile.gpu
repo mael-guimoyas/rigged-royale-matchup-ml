@@ -1,0 +1,91 @@
+# CUDA inference image for the antisymmetric matchup model.
+#
+# Sibling of the CPU `Dockerfile`, which stays the image netcup runs. The only
+# real differences are the torch wheel (CUDA instead of CPU-only) and the thread
+# defaults; the application code is identical and picks its device at runtime
+# from MODEL_DEVICE (see predictor.resolve_device), so this same image still
+# serves correctly on a machine with no GPU.
+#
+# Build:  docker build -f Dockerfile.gpu -t rigged-model-gpu:latest .
+# See RUNPOD_SERVING.md for the RunPod Serverless deployment.
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# The CUDA torch wheel ships its own CUDA runtime libraries as pip dependencies,
+# so no nvidia/cuda base image is needed — only the host driver, which the
+# container runtime injects. That keeps the image markedly smaller, and image
+# size is cold-start time on a serverless worker that has to pull it.
+#
+# cu128 covers Ampere through Blackwell (an RTX 5090 / sm_120 needs it), so one
+# image works whichever GPU class the endpoint ends up scheduling on.
+#
+# --index-url, not --extra-index-url: with an *extra* index pip is free to
+# resolve torch from PyPI instead, and silently installing a CPU-only build into
+# a GPU image is the exact failure this whole file exists to avoid.
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu128 torch
+
+# Serving needs torch, numpy and the web stack — nothing else. The package's
+# declared dependencies also pull duckdb, pyarrow, psycopg and scikit-learn,
+# which exist for training and shard preparation and would add hundreds of
+# megabytes to an image whose pull time is cold-start time. --no-deps installs
+# the code without them; dataset.py imports pyarrow lazily so the serving
+# import path never reaches for one of the absent packages.
+RUN pip install --no-cache-dir "numpy>=1.26" "fastapi>=0.115" "uvicorn[standard]>=0.30"
+COPY pyproject.toml README.md ./
+COPY src ./src
+RUN pip install --no-cache-dir --no-deps .
+
+# Compile every installed module to bytecode at build time. Without this the
+# first import in a fresh container compiles torch's several thousand .py files
+# and writes the .pyc cache, on every cold start, into a writable layer that is
+# thrown away when the worker stops. `|| true` because compileall reports a
+# non-zero status for any file that fails to compile, and a few unused
+# third-party modules always do.
+RUN python -m compileall -q /usr/local/lib/python3.11/site-packages > /dev/null || true
+
+# CUDA kernels are loaded on first use rather than all at context creation.
+# This is the default on recent CUDA, but is what makes the difference between
+# a context that is ready in about a second and one that is not, so it is set
+# explicitly rather than inherited.
+ENV CUDA_MODULE_LOADING=LAZY
+
+# Nothing here writes .pyc at runtime (the cache above is already complete) and
+# unbuffered output means startup logs reach RunPod's console as they happen
+# instead of when the buffer flushes.
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# Bake the trained checkpoint into the image. A serverless worker has no
+# persistent volume to read it from, and at ~2 MB it costs nothing to ship.
+# Override MODEL_CHECKPOINT to point at a mounted file during local testing.
+COPY artifacts/matchup-model.pt ./artifacts/matchup-model.pt
+ENV MODEL_CHECKPOINT=/app/artifacts/matchup-model.pt
+
+# "auto" takes the GPU when one is visible and degrades to CPU when it is not,
+# so a misconfigured endpoint serves slowly instead of failing to start. Force
+# it to "cuda" only if you would rather the fallback be loud.
+ENV MODEL_DEVICE=auto
+
+# Burn one batch at startup so the CUDA context, kernels and cuBLAS workspaces
+# are paid for before the load balancer sends real traffic. On a worker that
+# scales to zero this happens on every cold start, not once.
+ENV MODEL_WARMUP=1
+
+# Deliberately NOT pinning OMP_NUM_THREADS=1 the way the CPU image does. That
+# cap is tuned for many concurrent single-request CPU forwards; here the forward
+# pass is on the GPU and the CPU is needed for the row encoder, which is the
+# remaining serial cost of a batch.
+#
+# Raise WEB_CONCURRENCY to run several uvicorn workers: the encoder is
+# single-threaded Python, so extra processes are what keep the GPU fed while
+# other requests are still being encoded. Each worker holds its own copy of the
+# model, which is negligible at this size.
+ENV WEB_CONCURRENCY=1
+
+# RunPod injects $PORT for a load-balancing endpoint (its default is 80); local
+# runs fall back to 8080 like the CPU image. Leave PORT_HEALTH unset, or equal
+# to PORT — this container serves /ping on the one port it listens to.
+EXPOSE 8080
+CMD ["sh", "-c", "exec uvicorn rigged_matchup_ml.serve:app --host 0.0.0.0 --port ${PORT:-8080} --workers ${WEB_CONCURRENCY:-1}"]

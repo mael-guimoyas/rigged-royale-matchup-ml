@@ -258,6 +258,25 @@ def test_health_reports_loaded(client) -> None:
     assert body["model_name"]
 
 
+def test_health_reports_the_serving_device(client) -> None:
+    """A GPU worker that quietly fell back to CPU has to be visible over HTTP."""
+    body = client.get("/health").json()
+    assert body["device"] in {"cpu", "cuda", "cuda:0"} or body["device"].startswith("cuda")
+
+
+def test_ping_is_a_bare_readiness_code(client) -> None:
+    """RunPod's load balancer reads only the status code, and sends no API key."""
+    response = client.get("/ping")
+    assert response.status_code == 200
+    assert not response.content
+
+
+def test_ping_needs_no_api_key(client, monkeypatch) -> None:
+    monkeypatch.setenv("PREDICT_API_KEY", "a-secret-the-balancer-does-not-have")
+    assert client.get("/ping").status_code == 200
+    assert client.post("/predict", json=WEB_PAYLOAD).status_code == 401
+
+
 def test_predict_returns_valid_contract(client) -> None:
     response = client.post("/predict", json=WEB_PAYLOAD)
     assert response.status_code == 200
@@ -422,10 +441,92 @@ def test_predict_batch_stays_antisymmetric(client) -> None:
 
 
 def test_predict_batch_rejects_empty_and_oversized(client) -> None:
-    # 512 is the cap the site's META_BATCH_SIZE is tuned against; keep them in step.
+    """The cap is configurable, so assert against it rather than a literal.
+
+    It still has to stay at least as large as the site's ML_INFERENCE_BATCH_SIZE:
+    an oversized payload is refused outright, never split.
+    """
+    from rigged_matchup_ml.serve import MAX_BATCH_REQUESTS
+
+    assert MAX_BATCH_REQUESTS >= 512
     assert client.post("/predict/batch", json={"requests": []}).status_code == 422
-    oversized = {"requests": [WEB_PAYLOAD] * 513}
+    oversized = {"requests": [WEB_PAYLOAD] * (MAX_BATCH_REQUESTS + 1)}
     assert client.post("/predict/batch", json=oversized).status_code == 422
+
+
+def test_resolve_device_defaults_to_cpu_without_a_gpu(monkeypatch) -> None:
+    import torch
+
+    from rigged_matchup_ml.predictor import resolve_device
+
+    monkeypatch.delenv("MODEL_DEVICE", raising=False)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    assert resolve_device().type == "cpu"
+    # An explicit cuda request on a host with no GPU degrades instead of raising:
+    # a slow serving container still beats one that never becomes healthy.
+    assert resolve_device("cuda").type == "cpu"
+
+
+def test_resolve_device_reads_the_environment(monkeypatch) -> None:
+    import torch
+
+    from rigged_matchup_ml.predictor import resolve_device
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setenv("MODEL_DEVICE", "auto")
+    assert resolve_device().type == "cuda"
+    monkeypatch.setenv("MODEL_DEVICE", "cpu")
+    assert resolve_device().type == "cpu"
+    # An explicit argument wins over the environment.
+    assert resolve_device("cuda:0").type == "cuda"
+
+
+def test_warm_up_runs_a_batch_through_the_loaded_model(tmp_path) -> None:
+    from rigged_matchup_ml.predictor import load_bundle, warm_up_bundle
+
+    checkpoint = tmp_path / "matchup-model.pt"
+    _make_checkpoint(checkpoint)
+    bundle = load_bundle(checkpoint)
+    assert bundle["device"] == "cpu"
+    assert warm_up_bundle(bundle, batch_size=2) is True
+
+
+def test_batch_predictions_match_single_predictions(tmp_path) -> None:
+    """The batch path must agree with the single path, row for row.
+
+    It takes a different route to the same number: the vectorised encoder, and
+    one stacked 2N-row forward pass covering both directions instead of two
+    separate N-row passes. Both are supposed to be arithmetically identical
+    rearrangements, so any divergence here is a real bug rather than a tolerance
+    question.
+    """
+    from rigged_matchup_ml.predictor import load_bundle, predict_from_row, predict_from_rows
+    from rigged_matchup_ml.serve import request_to_row
+
+    checkpoint = tmp_path / "matchup-model.pt"
+    _make_checkpoint(checkpoint)
+    bundle = load_bundle(checkpoint)
+
+    payloads = [
+        MatchupRequest(**WEB_PAYLOAD),
+        MatchupRequest(**{**WEB_PAYLOAD, "mode_key": "ranked", "league_number": 4}),
+        MatchupRequest(**{**WEB_PAYLOAD, "team_trophies": 5200, "team_hero_card_ids": []}),
+    ]
+    rows = [request_to_row(payload, bundle) for payload in payloads]
+
+    batched = predict_from_rows(bundle, rows)
+    assert len(batched) == len(rows)
+    for row, batch_result in zip(rows, batched, strict=True):
+        single = predict_from_row(bundle, row)
+        for field in (
+            "team_win_probability",
+            "opponent_win_probability",
+            "raw_team_win_probability",
+            "pre_projection_team_win_probability",
+            "calibration_symmetry_error",
+        ):
+            assert batch_result[field] == pytest.approx(single[field], abs=1e-6), field
+        assert batch_result["segment"] == single["segment"]
 
 
 def test_real_checkpoint_loads_if_compatible() -> None:

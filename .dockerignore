@@ -24,5 +24,6 @@ artifacts/*.csv
 
 # Local dev / CI
 docker-compose.yml
+docker-compose.gpu.yml
 .github/
 *.ipynb

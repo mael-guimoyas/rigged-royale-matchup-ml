@@ -10,8 +10,11 @@ from rigged_matchup_ml.dataset import (
     _assemble_batch,
     _decode_batch,
     _EncodeContext,
+    build_encode_context,
     encode_row,
     encode_rows,
+    encode_rows_both_directions,
+    encode_rows_vectorised,
 )
 
 
@@ -121,6 +124,50 @@ def test_vectorised_batch_matches_encode_rows() -> None:
         torch.tensor(UNKNOWN_CARD_METADATA_VECTOR, dtype=torch.float32),
     )
     assert batch["team_card_present"][1, 2].item() is True
+
+
+def test_vectorised_serving_encoder_matches_encode_rows() -> None:
+    """The serving encoder takes dict rows, so it needs its own equivalence guard.
+
+    ``_second_row`` covers the branches the fast path could get wrong: a short
+    deck (padding), a card absent from the vocabulary, and a different tower.
+    """
+    rows = [row(), _second_row()]
+    context = build_encode_context(VOCABULARY)
+    for swap in (None, [False, True], [True, True]):
+        produced = encode_rows_vectorised(rows, VOCABULARY, context, swapped=swap)
+        expected = encode_rows(rows, VOCABULARY, swapped=swap)
+        assert set(produced) == set(expected)
+        for key, value in expected.items():
+            assert torch.equal(produced[key], value), (key, swap)
+
+
+def test_both_directions_matches_two_separate_encodes() -> None:
+    """Sharing one decode between the two directions must change nothing."""
+    rows = [row(), _second_row()]
+    forward, reverse = encode_rows_both_directions(
+        rows, VOCABULARY, build_encode_context(VOCABULARY)
+    )
+    expected_forward = encode_rows(rows, VOCABULARY)
+    expected_reverse = encode_rows(rows, VOCABULARY, swapped=[True, True])
+    for key, value in expected_forward.items():
+        assert torch.equal(forward[key], value), key
+    for key, value in expected_reverse.items():
+        assert torch.equal(reverse[key], value), key
+    # The mirror really is the mirror: the team side of one is the opponent side
+    # of the other, which is what the antisymmetry guarantee rests on.
+    assert torch.equal(forward["team_cards"], reverse["opponent_cards"])
+    assert torch.equal(forward["opponent_cards"], reverse["team_cards"])
+
+
+def test_vectorised_serving_encoder_tolerates_missing_optional_fields() -> None:
+    """Serving rows carry no ``win``; ``matrix_prior`` defaults the same way."""
+    sample = row()
+    sample.pop("win", None)
+    sample.pop("matrix_prior", None)
+    produced = encode_rows_vectorised([sample], VOCABULARY)
+    assert produced["target"].tolist() == [0.0]
+    assert produced["matrix_prior"].tolist() == [0.5]
 
 
 def test_vectorised_batch_matches_encode_rows_swapped() -> None:
