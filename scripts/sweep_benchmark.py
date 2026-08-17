@@ -147,12 +147,27 @@ def main() -> None:
     megabytes = sum(len(body) for body in bodies) / (1024 * 1024)
     print(f"payload  {megabytes:.1f} MiB total")
 
-    # One warm-up batch, so a cold worker is not charged to the sweep.
-    warm = _Client(arguments.url, headers, arguments.timeout)
-    print("warming up...", flush=True)
-    status, _ = warm.post(bodies[0])
-    if status != 200:
-        print(f"WARNING: warm-up returned HTTP {status}")
+    # Warm every worker the sweep will use, not just one. A remote endpoint
+    # scales workers on concurrent request count, so a single warm-up batch
+    # leaves the other --concurrency-1 workers cold and they pay their start-up
+    # inside the measurement. Firing `concurrency` batches at once forces the
+    # endpoint to spin them all up first.
+    print(f"warming up {arguments.concurrency} worker(s)...", flush=True)
+    warm_results: list[int] = []
+    warm_lock = threading.Lock()
+
+    def warm_one() -> None:
+        status, _ = _Client(arguments.url, headers, arguments.timeout).post(bodies[0])
+        with warm_lock:
+            warm_results.append(status)
+
+    warmers = [threading.Thread(target=warm_one) for _ in range(max(1, arguments.concurrency))]
+    for thread in warmers:
+        thread.start()
+    for thread in warmers:
+        thread.join()
+    if any(status != 200 for status in warm_results):
+        print(f"WARNING: warm-up statuses {warm_results}")
 
     queue: Queue = Queue()
     for item in enumerate(bodies):
@@ -200,10 +215,23 @@ def main() -> None:
     if ordered:
         # Nearest-rank percentile: int(0.95 * (n - 1)) collapses below the median
         # on a handful of samples, which makes a smoke run look broken.
-        rank = min(len(ordered) - 1, math.ceil(0.95 * len(ordered)) - 1)
-        print(f"  per batch     p50 {statistics.median(ordered):.3f} s   "
-              f"p95 {ordered[rank]:.3f} s   "
-              f"max {ordered[-1]:.3f} s")
+        def rank(fraction: float) -> float:
+            return ordered[min(len(ordered) - 1, math.ceil(fraction * len(ordered)) - 1)]
+
+        print(f"  per batch     min {ordered[0]:.3f}   p50 {statistics.median(ordered):.3f}   "
+              f"p90 {rank(0.90):.3f}   p95 {rank(0.95):.3f}   max {ordered[-1]:.3f}  (s)")
+        # Throughput the endpoint sustains once nothing is starting up. Batches
+        # slower than twice the median are almost always a worker spinning up,
+        # and reporting both numbers separates "this endpoint is slow" from
+        # "this endpoint spent the sweep scaling".
+        median = statistics.median(ordered)
+        steady = [value for value in ordered if value <= 2 * median]
+        if steady and len(steady) < len(ordered):
+            per_batch = statistics.mean(steady)
+            print(f"  steady state  {len(steady)}/{len(ordered)} batches under 2x median; "
+                  f"implies {arguments.batch * arguments.concurrency / per_batch:,.0f} rows/s")
+            print(f"  cold-start cost {(1 - (answered / wall) / (arguments.batch * arguments.concurrency / per_batch)) * 100:.0f}% "
+                  "of the sweep's throughput")
 
 
 if __name__ == "__main__":
