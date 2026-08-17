@@ -15,6 +15,7 @@ Run locally:  ``rigged-matchup serve``  (or ``uvicorn rigged_matchup_ml.serve:ap
 from __future__ import annotations
 
 import os
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -390,6 +391,33 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Rigged Royale Matchup ML Inference", version="1.0.0", lifespan=lifespan)
 
 
+@app.middleware("http")
+async def server_timing(request: Request, call_next):
+    """Report what the service itself spent, so callers can subtract the network.
+
+    A remote batch caller sees one number: the round trip. That number is
+    useless on its own — it cannot tell a slow model from a slow link, and for
+    this service the two differ by an order of magnitude. The standard
+    ``Server-Timing`` header splits it:
+
+      total  everything inside the process: reading and validating the payload,
+             encoding, the forward passes, and serialising the response
+      model  just the encode + forward + calibration work
+
+    ``round_trip - total`` is therefore transfer and routing, and
+    ``total - model`` is JSON and validation overhead. Both are things you would
+    otherwise have to guess at.
+    """
+    started = time.perf_counter()
+    response = await call_next(request)
+    parts = [f"total;dur={(time.perf_counter() - started) * 1000:.1f}"]
+    model_ms = getattr(request.state, "model_ms", None)
+    if model_ms is not None:
+        parts.append(f"model;dur={model_ms:.1f}")
+    response.headers["Server-Timing"] = ", ".join(parts)
+    return response
+
+
 def require_api_key(x_api_key: str | None = Header(default=None)) -> None:
     expected = os.getenv("PREDICT_API_KEY", "").strip() or None
     if expected and x_api_key != expected:
@@ -466,4 +494,11 @@ def predict_batch(request: Request, payload: BatchMatchupRequest) -> BatchPredic
     bundle = getattr(request.app.state, "bundle", None)
     if bundle is None:  # pragma: no cover - lifespan always loads it
         raise HTTPException(status_code=503, detail="Model not loaded")
-    return build_batch_response(bundle, payload)
+    started = time.perf_counter()
+    response = build_batch_response(bundle, payload)
+    # Read back by the Server-Timing middleware. Measured here rather than around
+    # the whole request so it excludes payload validation and response
+    # serialisation, which is exactly the distinction that makes the header
+    # worth having.
+    request.state.model_ms = (time.perf_counter() - started) * 1000
+    return response
