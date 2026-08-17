@@ -208,9 +208,23 @@ def main() -> None:
     ordered = sorted(durations)
     print()
     print(f"  answered      {answered} / {arguments.rows} rows")
-    if failures:
-        print(f"  FAILURES      {failures}  (status 0 = connection error)")
     print(f"  wall clock    {wall:.2f} s")
+
+    # A run that failed must never be able to read as a fast one. Timings of
+    # rejected requests are timings of an error page, and extrapolating
+    # throughput from them produces confident nonsense -- a 404'd sweep once
+    # reported 89,000 rows/s. Say what went wrong and stop.
+    if failures or answered < arguments.rows:
+        print(f"  FAILURES      {failures}  (status 0 = connection error)")
+        print()
+        print("  RUN INVALID -- not every row was answered, so the timings below")
+        print("  describe rejections, not inference. Fix the failures and re-run.")
+        if 404 in failures:
+            print("  404 on every batch usually means the URL is wrong, not the service.")
+        if ordered:
+            print(f"  (per batch min {ordered[0]:.3f}  max {ordered[-1]:.3f} s)")
+        return
+
     print(f"  throughput    {answered / wall:,.0f} rows/s")
     if ordered:
         # Nearest-rank percentile: int(0.95 * (n - 1)) collapses below the median
