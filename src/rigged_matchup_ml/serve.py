@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from .card_stats import CHAMPION_CARD_IDS
 from .domain import ROLE_CHAMPION, ROLE_HERO, ROLE_NORMAL, Deck, segment_for
+from .hero_evo_correction import CORRECTION_KEY
 from .predictor import (
     load_bundle,
     predict_from_row,
@@ -319,6 +320,12 @@ def response_from_result(
             "segment": result["segment"],
             "patch": result["patch"],
             "raw_win_probability": round(float(result["raw_team_win_probability"]), 6),
+            "pre_correction_win_probability": round(
+                float(result["pre_correction_team_win_probability"]), 6
+            ),
+            "hero_evo_logit_adjustment": round(
+                float(result["hero_evo_logit_adjustment"]), 6
+            ),
             "symmetry_error": round(float(result["symmetry_error"]), 6),
             "calibration_symmetry_error": round(float(result["calibration_symmetry_error"]), 6),
             "temperature": result["temperature"],
@@ -461,12 +468,24 @@ def ping(request: Request) -> Response:
 def health(request: Request) -> dict[str, Any]:
     bundle = getattr(request.app.state, "bundle", None)
     supports_heroes = _supports_heroes(bundle)
+    correction = bundle.get(CORRECTION_KEY) if bundle else None
     return {
         "ok": bundle is not None,
         "model_name": os.getenv("MODEL_NAME", DEFAULT_MODEL_NAME),
         "model_version": bundle.get("resolved_model_version") if bundle else None,
         "supports_heroes": supports_heroes,
-        "capabilities": {"heroes": supports_heroes, "evolutions": bundle is not None},
+        "capabilities": {
+            "heroes": supports_heroes,
+            "evolutions": bundle is not None,
+            "hero_evo_statistical_correction": correction is not None,
+        },
+        "hero_evo_correction": {
+            "enabled": correction is not None,
+            "shrinkage": correction.get("shrinkage") if correction else None,
+            "heroes_covered": len(correction.get("coefficients_by_hero_card_id", {}))
+            if correction
+            else 0,
+        },
         # Which device actually served the request, so a GPU worker that silently
         # fell back to CPU is visible from the outside instead of only in logs.
         "device": bundle.get("device") if bundle else None,

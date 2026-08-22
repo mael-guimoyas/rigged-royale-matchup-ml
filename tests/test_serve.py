@@ -256,6 +256,11 @@ def test_health_reports_loaded(client) -> None:
     body = response.json()
     assert body["ok"] is True
     assert body["model_name"]
+    assert body["hero_evo_correction"] == {
+        "enabled": False,
+        "shrinkage": None,
+        "heroes_covered": 0,
+    }
 
 
 def test_health_reports_the_serving_device(client) -> None:
@@ -486,7 +491,9 @@ def test_warm_up_runs_a_batch_through_the_loaded_model(tmp_path) -> None:
 
     checkpoint = tmp_path / "matchup-model.pt"
     _make_checkpoint(checkpoint)
-    bundle = load_bundle(checkpoint)
+    # Keep this assertion independent of whether the developer machine has a
+    # CUDA-enabled PyTorch build installed.
+    bundle = load_bundle(checkpoint, "cpu")
     assert bundle["device"] == "cpu"
     assert warm_up_bundle(bundle, batch_size=2) is True
 
@@ -527,6 +534,52 @@ def test_batch_predictions_match_single_predictions(tmp_path) -> None:
         ):
             assert batch_result[field] == pytest.approx(single[field], abs=1e-6), field
         assert batch_result["segment"] == single["segment"]
+
+
+def test_embedded_hero_evo_correction_matches_single_and_batch_paths(tmp_path) -> None:
+    import math
+
+    import torch
+
+    from rigged_matchup_ml.hero_evo_correction import CORRECTION_KEY
+    from rigged_matchup_ml.predictor import load_bundle, predict_from_row, predict_from_rows
+    from rigged_matchup_ml.serve import request_to_row
+
+    checkpoint = tmp_path / "matchup-model.pt"
+    _make_checkpoint(checkpoint)
+    payload = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    payload[CORRECTION_KEY] = {
+        "schema_version": 1,
+        "application": "post_calibration_antisymmetric_logit",
+        "shrinkage": 0.75,
+        "coefficients_by_hero_card_id": {"26000014": 0.4},
+    }
+    torch.save(payload, checkpoint)
+    # Keep the single/batch numerical comparison device-independent.
+    bundle = load_bundle(checkpoint, "cpu")
+    request = MatchupRequest(
+        **{
+            **WEB_PAYLOAD,
+            # Musketeer is the Hero; Knight remains the distinct equipped Evo.
+            "team_hero_card_ids": [26000014],
+        }
+    )
+    row = request_to_row(request, bundle)
+
+    single = predict_from_row(bundle, row)
+    batched = predict_from_rows(bundle, [row])[0]
+    assert single["hero_evo_logit_adjustment"] == pytest.approx(0.3)
+    assert batched["team_win_probability"] == pytest.approx(
+        single["team_win_probability"], abs=1e-6
+    )
+    before = float(single["pre_correction_team_win_probability"])
+    after = float(single["team_win_probability"])
+    assert math.log(after / (1.0 - after)) - math.log(before / (1.0 - before)) == pytest.approx(
+        0.3, abs=1e-6
+    )
+    assert single["team_win_probability"] + single["opponent_win_probability"] == pytest.approx(
+        1.0, abs=1e-7
+    )
 
 
 def test_real_checkpoint_loads_if_compatible() -> None:

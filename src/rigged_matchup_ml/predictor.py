@@ -10,6 +10,7 @@ import torch
 
 from .card_stats import metadata_for
 from .dataset import build_encode_context, encode_row, encode_rows_both_directions
+from .hero_evo_correction import correction_profile, hero_evo_logit_adjustment
 from .model import SymmetricMatchupModel
 
 
@@ -82,6 +83,9 @@ def load_bundle(checkpoint_path: Path, device: torch.device | str | None = None)
     """
     resolved = device if isinstance(device, torch.device) else resolve_device(device)
     payload = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    # Validate optional statistical metadata at startup rather than letting the
+    # first Hero request discover a malformed deployed artifact.
+    correction_profile(payload)
     model = SymmetricMatchupModel(**payload["model_config"])
     model.load_state_dict(payload["model_state"])
     model.eval()
@@ -429,6 +433,15 @@ def predict_from_row(
         projected, projected_reverse, calibration_symmetry_error = _antisymmetric_projection(
             calibrated_probability, calibrated_reverse_probability
         )
+        pre_correction_projected = projected
+        logit_adjustment = hero_evo_logit_adjustment(bundle, request)
+        if logit_adjustment != 0.0:
+            corrected_logit = torch.logit(projected.clamp(1e-7, 1.0 - 1e-7))
+            projected = torch.sigmoid(corrected_logit + logit_adjustment)
+            # The correction is explicitly team-minus-opponent. Deriving the
+            # reverse from the corrected team probability retains exact
+            # antisymmetry even when segment calibration has an intercept.
+            projected_reverse = 1.0 - projected
         probability = float(projected.item())
         reverse_probability = float(projected_reverse.item())
         raw_probability = float(torch.sigmoid(logit).item())
@@ -437,6 +450,8 @@ def predict_from_row(
     result: dict[str, Any] = {
         "team_win_probability": probability,
         "opponent_win_probability": reverse_probability,
+        "pre_correction_team_win_probability": float(pre_correction_projected.item()),
+        "hero_evo_logit_adjustment": logit_adjustment,
         "pre_projection_team_win_probability": float(calibrated_probability.item()),
         "pre_projection_opponent_win_probability": float(calibrated_reverse_probability.item()),
         "raw_team_win_probability": raw_probability,
@@ -526,8 +541,18 @@ def predict_from_rows(
         projected, projected_reverse, calibration_symmetry_errors = _antisymmetric_projection(
             calibrated_probabilities, calibrated_reverse_probabilities
         )
+        pre_correction_projected = projected
+        logit_adjustments = [hero_evo_logit_adjustment(bundle, request) for request in requests]
+        if any(adjustment != 0.0 for adjustment in logit_adjustments):
+            adjustment_tensor = torch.tensor(
+                logit_adjustments, dtype=projected.dtype, device=device
+            )
+            corrected_logits = torch.logit(projected.clamp(1e-7, 1.0 - 1e-7))
+            projected = torch.sigmoid(corrected_logits + adjustment_tensor)
+            projected_reverse = 1.0 - projected
         probabilities = projected.cpu().tolist()
         reverse_probabilities = projected_reverse.cpu().tolist()
+        pre_correction_probabilities = pre_correction_projected.cpu().tolist()
         calibration_symmetry_errors = calibration_symmetry_errors.cpu().tolist()
         raw_probabilities = torch.sigmoid(logits).cpu().tolist()
         raw_reverse_probabilities = torch.sigmoid(reverse_logits).cpu().tolist()
@@ -536,6 +561,8 @@ def predict_from_rows(
         {
             "team_win_probability": probability,
             "opponent_win_probability": reverse_probability,
+            "pre_correction_team_win_probability": pre_correction_probability,
+            "hero_evo_logit_adjustment": logit_adjustment,
             "pre_projection_team_win_probability": pre_projection_probability,
             "pre_projection_opponent_win_probability": pre_projection_reverse_probability,
             "raw_team_win_probability": raw_probability,
@@ -550,11 +577,13 @@ def predict_from_rows(
             "bias": calibration[1],
             "global_temperature": calibration[2],
         }
-        for request, calibration, probability, reverse_probability, pre_projection_probability, pre_projection_reverse_probability, calibration_symmetry_error, raw_probability, raw_reverse_probability in zip(
+        for request, calibration, probability, reverse_probability, pre_correction_probability, logit_adjustment, pre_projection_probability, pre_projection_reverse_probability, calibration_symmetry_error, raw_probability, raw_reverse_probability in zip(
             requests,
             calibrations,
             probabilities,
             reverse_probabilities,
+            pre_correction_probabilities,
+            logit_adjustments,
             pre_projection_probabilities,
             pre_projection_reverse_probabilities,
             calibration_symmetry_errors,

@@ -16,12 +16,12 @@ from .extraction import (
     drain_from_supabase,
     extract_from_supabase,
 )
+from .hero_evo_correction import attach_v5_a9d92a10_correction
 from .meta_evaluation import evaluate_meta
 from .predictor import predict_payload
 from .prepare import prepare_splits
 from .trainer import evaluate_checkpoint, train_model
 from .unseen_evaluation import evaluate_unseen_matchups
-
 
 app = typer.Typer(no_args_is_help=True, help="Rigged Royale matchup-quality ML pipeline")
 DEFAULT_CONFIG = Path("config/default.yaml")
@@ -338,6 +338,22 @@ def train(config: Path = DEFAULT_CONFIG) -> None:
     """Train and calibrate the antisymmetric matchup model."""
     checkpoint = train_model(load_config(config))
     typer.echo(str(checkpoint))
+
+
+@app.command("attach-hero-evo-correction")
+def attach_hero_evo_correction(
+    source: Path,
+    destination: Path,
+    shrinkage: float = typer.Option(
+        0.75,
+        min=0.0,
+        max=1.0,
+        help="Fraction of the measured per-Hero correction to apply.",
+    ),
+) -> None:
+    """Embed the measured v5-a9d92a10 Hero/Evo correction without retraining."""
+    output = attach_v5_a9d92a10_correction(source, destination, shrinkage)
+    typer.echo(str(output))
 
 
 @app.command()

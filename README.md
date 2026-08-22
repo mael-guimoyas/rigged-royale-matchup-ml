@@ -383,6 +383,23 @@ Le rapport exact-deck peut avoir une faible couverture. C'est normal : baisse
 rigged-matchup predict artifacts/matchup-model.pt example-matchup.json
 ```
 
+### Correction statistique Hero + Evo
+
+Le checkpoint `v5-a9d92a103d6f` peut recevoir la correction post-calibration
+Hero×Evo mesurée sur les 16 Heroes actuels, sans réentraînement et sans modifier
+le fichier source :
+
+```powershell
+rigged-matchup attach-hero-evo-correction `
+  artifacts/matchup-model.pt `
+  artifacts/matchup-model-hero-evo-corrected.pt
+```
+
+La correction est spécifique au SHA-256 du checkpoint étudié. La commande
+refuse donc un autre modèle au lieu d'y appliquer des coefficients périmés. Le
+service expose son activation, son facteur de régularisation et le nombre de
+Heroes couverts dans `/health`.
+
 Les rôles utilisent les codes suivants : `1=normal`, `2=champion`, `3=hero`. L'identité de
 la carte reste toujours la variable principale ; un nouveau héros est donc supporté dès que
 son ID apparaît dans les données d'entraînement.
