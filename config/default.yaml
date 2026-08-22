@@ -79,6 +79,13 @@ model:
   # cross-deck counter terms so a win condition (and a counter to it) outweighs a
   # support card or defensive building. Neutral at init; needs card_metadata_dim>0.
   use_card_importance: true
+  # Do not give every Hero deck the same global identity shift. That shortcut
+  # learned player/archetype selection bias and then leaked it into every
+  # intra-deck pair, producing a systematic negative Evo x Hero interaction.
+  # Hero forms remain fully learnable through the card-specific Hero embedding
+  # and their ability metadata. Old checkpoints that predate this option default
+  # to true when loaded, preserving their original inference behaviour.
+  use_shared_hero_features: false
 
 training:
   seed: 42

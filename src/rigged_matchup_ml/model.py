@@ -5,7 +5,6 @@ from torch import nn
 
 from .card_stats import CARD_METADATA_VECTOR_SIZE
 
-
 DECK_PAIR_INDICES = torch.triu_indices(8, 8, offset=1)
 
 
@@ -25,6 +24,7 @@ class DeckEncoder(nn.Module):
         deck_transformer_heads: int = 4,
         deck_transformer_layers: int = 1,
         use_card_importance: bool = False,
+        use_shared_hero_features: bool = True,
     ) -> None:
         super().__init__()
         self.max_evolution_level = max_evolution_level
@@ -32,6 +32,11 @@ class DeckEncoder(nn.Module):
         self.max_elixir = max_elixir
         self.card_metadata_dim = max(0, int(card_metadata_dim))
         self.use_deck_transformer = use_deck_transformer
+        # Compatibility default is true: checkpoints written before this option
+        # have no key in model_config and must retain the representation they were
+        # trained with. New training config disables these global Hero shortcuts
+        # and keeps the card-specific identity + gameplay metadata instead.
+        self.use_shared_hero_features = bool(use_shared_hero_features)
         self.card_embedding = nn.Embedding(card_count, embedding_dim, padding_idx=0)
         # Card-specific "this card, evolved/hero" identity shifts. A shared
         # evolution/hero LEVEL embedding alone makes evolved-ness a single global
@@ -143,7 +148,7 @@ class DeckEncoder(nn.Module):
             weight = weight * torch.exp(
                 self.evo_importance_gate * (evolutions > 0).to(weight.dtype)
             )
-        if heroes is not None:
+        if heroes is not None and self.use_shared_hero_features:
             weight = weight * torch.exp(
                 self.hero_importance_gate * (heroes > 0).to(weight.dtype)
             )
@@ -179,6 +184,20 @@ class DeckEncoder(nn.Module):
         heroes = heroes.clamp(0, self.max_hero_level)
         roles = roles.clamp(0, 3)
         elixir = elixir.clamp(0, self.max_elixir)
+        # A Hero is an equipped form of this exact card, not a strategic role
+        # shared by every Hero deck. The old representation added both a global
+        # Hero-level embedding and ROLE_HERO before every synergy/counter layer.
+        # On the production checkpoint those two shortcuts reproduce virtually
+        # all of the spurious negative Evo x Hero interaction. New checkpoints
+        # neutralise them while preserving the per-card Hero identity below and
+        # the form-dependent ability metadata supplied by the dataset.
+        if self.use_shared_hero_features:
+            shared_hero_levels = heroes
+        else:
+            shared_hero_levels = torch.zeros_like(heroes)
+            # Domain role ids: padding=0, normal=1, champion=2, hero=3. Only the
+            # equipped Hero positions are remapped; Champions remain Champions.
+            roles = torch.where(heroes > 0, torch.ones_like(roles), roles)
         # Shift the base card identity when this card is fielded in its evolved or
         # hero form, gated by the per-position evo/hero flag. Zero-init keeps this a
         # no-op until the deltas are learned.
@@ -192,7 +211,7 @@ class DeckEncoder(nn.Module):
         card_parts = [
             card_identity,
             self.evolution_embedding(evolutions),
-            self.hero_embedding(heroes),
+            self.hero_embedding(shared_hero_levels),
             self.role_embedding(roles),
             self.elixir_embedding(elixir),
         ]
@@ -436,6 +455,7 @@ class SymmetricMatchupModel(nn.Module):
         matrix_prior_learnable: bool = False,
         card_metadata_dim: int = CARD_METADATA_VECTOR_SIZE,
         use_card_importance: bool = False,
+        use_shared_hero_features: bool = True,
     ) -> None:
         super().__init__()
         # logit(prior) is antisymmetric (prior swaps to 1-prior), so a scalar
@@ -469,6 +489,7 @@ class SymmetricMatchupModel(nn.Module):
             deck_transformer_heads=deck_transformer_heads,
             deck_transformer_layers=deck_transformer_layers,
             use_card_importance=use_card_importance,
+            use_shared_hero_features=use_shared_hero_features,
         )
         self.card_interactions = (
             CardInteractionEncoder(

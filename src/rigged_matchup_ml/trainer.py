@@ -140,6 +140,13 @@ def _model_config(config: AppConfig, vocabulary: dict[str, dict[str, int]]) -> d
         "card_metadata_dim": int(
             config.model.get("card_metadata_dim", CARD_METADATA_VECTOR_SIZE)
         ),
+        # This is the safe default for every newly trained checkpoint, including
+        # runs based on an older/custom YAML that predates the option. Loading an
+        # existing checkpoint remains backward-compatible through the model
+        # constructor's True default.
+        "use_shared_hero_features": bool(
+            config.model.get("use_shared_hero_features", False)
+        ),
         **config.model,
     }
 
