@@ -194,6 +194,8 @@ CARD_TABLE: dict[int, tuple[str, str, tuple[str, ...], int, int, int, int, int]]
     # Keep retired ``reflect`` out until a new metadata width is introduced;
     # card_stats.py documents the checkpoint compatibility impact.
     26000106: ("troop", "dps", ("high_dps",), 3, 4, 4, 3, 1),                            # Ronin
+    # Season 87: ranged flying building-targeter, 4 elixir, medium speed.
+    26000107: ("troop", "win_condition", ("flying", "building_target"), 4, 2, 2, 2, 4),  # Minion Giant
     28000016: ("troop", "swarm", (), 1, 1, 1, 4, 2),                                      # Heal Spirit
     28000025: ("troop", "support", ("splash", "air_target"), 2, 3, 3, 2, 4),              # Spirit Empress
     # --- Buildings --------------------------------------------------------
@@ -261,7 +263,7 @@ CARD_NAMES: dict[int, str] = {
     26000084: "Electro Spirit", 26000085: "Electro Giant", 26000086: "Raging Prince", 26000087: "Phoenix",
     26000093: "Little Prince", 26000095: "Goblin Demolisher", 26000096: "Goblin Machine",
     26000097: "Suspicious Bush", 26000099: "Goblinstein", 26000101: "Rune Giant", 26000102: "Berserker",
-    26000103: "Boss Bandit", 26000106: "Ronin",
+    26000103: "Boss Bandit", 26000106: "Ronin", 26000107: "Minion Giant",
     27000000: "Cannon", 27000001: "Goblin Hut", 27000002: "Mortar", 27000003: "Inferno Tower",
     27000004: "Bomb Tower", 27000005: "Barbarian Hut", 27000006: "Tesla", 27000007: "Elixir Collector",
     27000008: "X-Bow", 27000009: "Tombstone", 27000010: "Furnace", 27000012: "Goblin Cage",
@@ -302,6 +304,10 @@ HERO_ABILITY: dict[int, tuple[int, tuple[str, ...]]] = {
     26000014: (3, ("ability_spawn",)),                     # Hero Musketeer - Trusty Turret
     26000038: (2, ("ability_control",)),                   # Hero Ice Golem - Blizzard
     26000017: (1, ("ability_damage",)),                    # Hero Wizard - fire blast
+    26000023: (  # Hero Ice Wizard - Frosty Fella
+        2,
+        ("ability_spawn", "ability_damage", "ability_control"),
+    ),
     26000002: (2, ("ability_spawn",)),                     # Hero Goblins - Banner Brigade (respawn)
     26000039: (2, ("ability_dash", "ability_damage")),     # Hero Mega Minion - Wounding Warp
     28000015: (2, ("ability_damage",)),                    # Hero Barbarian Barrel - second roll

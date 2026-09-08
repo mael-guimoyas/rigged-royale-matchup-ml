@@ -136,6 +136,47 @@ rigged-matchup collect-api --from-supabase 500 --upload --max-battles 200000
 rigged-matchup collect-api --tags-file tags.txt --max-players 50
 ```
 
+Pour la saison 87, la configuration par défaut isole les nouveaux shards sous
+`data/season-87/raw`, découpe le ladder par tranches de 1 000 trophées et conserve
+chaque ligue ranked séparément. Les shards d'août dans `data/raw` ne sont ni lus ni
+supprimés. Le collecteur sait aussi terminer proprement un run chronométré :
+
+```powershell
+rigged-matchup collect-api --tags-file seeds_balanced.txt --max-duration-hours 10 --upload --prefix season-87 --no-progress
+```
+
+Sous Windows, `scripts/register_season87_collection.ps1` lance immédiatement le
+premier run puis programme les six suivants, soit 10 h/jour pendant 7 jours. Chaque
+run écrit son journal dans `logs/season-87/`. La borne `data.collect_not_before`
+rejette les combats antérieurs au démarrage de la saison encore présents dans les
+battlelogs.
+
+#### Collecte 24/7 sur Netcup
+
+Le serveur utilise un environnement Python léger, sans PyTorch, et un service `systemd`.
+Le collecteur travaille par cycles de 6 heures puis redémarre automatiquement après
+20 secondes : cela garde une collecte continue tout en libérant régulièrement la file
+snowball en mémoire. Un arrêt `systemd` envoie `SIGINT`, ce qui déclenche l'écriture du
+dernier shard partiel avant la sortie.
+
+Sur le serveur, clone le dépôt, crée `.env` à partir de `.env.example`, renseigne
+`CR_API_TOKEN`, `SUPABASE_URL` et `SUPABASE_SECRET_KEY`, puis lance :
+
+```bash
+bash scripts/install_netcup_collector.sh
+sudo systemctl status rigged-royale-collector.service
+sudo journalctl -u rigged-royale-collector.service -f
+```
+
+Les fichiers Netcup sont nommés `api-netcup-part-*.parquet`. Ils peuvent donc être
+uploadés sous le même préfixe Storage `season-87` que les shards Windows sans les
+écraser. Une fois un premier shard Netcup visible dans Storage, la tâche Windows peut
+être désactivée localement :
+
+```powershell
+Disable-ScheduledTask -TaskName "RiggedRoyale-Season87-Collect"
+```
+
 **Fraîcheur des combats.** Par défaut, seuls les combats des **2 derniers jours** sont
 gardés (`data.collect_max_age_days` dans `config/default.yaml`, surchargeable avec
 `--max-age-days`). Un battlelog contient les ~25 derniers matchs du joueur, qui peuvent
@@ -170,33 +211,33 @@ peuvent entrer en collision. Un verrou de processus refuse désormais ce cas ; a
 concurrence d'un seul processus avec `--workers` ou utilise le dimensionnement automatique.
 
 Attention : la fenêtre s'applique **à la collecte**, pas aux shards déjà sur le disque.
-Pour un corpus 100 % nouvelle meta, collecte dans un `data/raw` vide (ou déplace les
-anciens shards ailleurs) — sinon `prepare` mélangera l'ancien et le neuf.
+La configuration de la saison 87 pointe vers `data/season-87/raw`; les anciens shards
+restent donc archivés dans `data/raw` sans être mélangés par `prepare`.
 
 Il faut une amorce : `--from-supabase N` (tags depuis `public.players`) ou `--tags-file`.
 Chaque battlelog fournit l'adversaire ; `--snowball` (par défaut) met ces tags en file
 pour élargir la couverture. La `leagueNumber` vient du profil du joueur (`/players/{tag}`),
 donc les Parquet bruts conservent `ranked:league-N` dès la collecte, sans backfill.
-`prepare` regroupe ensuite ces valeurs selon `data.ranked_league_buckets` sans réécrire les
-shards : par défaut `league-1-2`, `league-3-4` et `league-5-7`.
-La déduplication réutilise `data/dedup.sqlite3` (clé `game_id` canonique : un même combat
+`prepare` peut ensuite regrouper ces valeurs selon `data.ranked_league_buckets` sans
+réécrire les shards. Pour la saison 87, cette liste est vide : chaque ligue reste unique.
+La déduplication utilise `data/season-87/dedup.sqlite3` (clé `game_id` canonique : un même combat
 vu chez deux joueurs n'est compté qu'une fois).
 
 #### Collecte équilibrée par niveau de trophées
 
-Par défaut (`--balance`), la collecte vise les bandes de trophées sous-représentées
-au lieu de re-piocher dans le coeur saturé (12000+). Au démarrage, elle scanne les
-shards existants pour mesurer la répartition actuelle (« où manque-t-il des combats »),
-puis sert en priorité la bande la plus en retard. Chaque adversaire snowballé porte ses
-`startingTrophies`, donc la file le range dans sa bande *avant* le fetch :
+La file suit chaque tranche de trophées séparément. Par défaut, elle échantillonne les
+tranches selon la fréquence réelle produite par le matchmaking afin de préserver une
+population représentative. `--deficit-bias` permet un top-up volontaire des tranches en
+retard, au prix d'un biais de sélection. Chaque adversaire snowballé porte ses
+`startingTrophies`, donc la file le range dans sa tranche *avant* le fetch :
 
 - les adversaires ladder **sous `--min-trophies` (5000 par défaut)** sont jetés direct —
   on ne s'entraîne pas sur le sub-5000, et les mettre en file ne faisait que gonfler la
   queue et brûler des requêtes sur des doublons (cause du démarrage lent : ~1h à remplir
   `accepted`). Les combats ladder parsés sous ce seuil sont aussi écartés ;
 - les combats ranked (Path of Legends, trophées masqués) sont toujours mis en file ;
-- la voie des trophées **saisonnière** monte haut : `trophy_buckets` sépare désormais
-  `12000-13999` du `14000+` (haut de la voie) au lieu d'un seul bloc `12000+`.
+- la saison 87 utilise les tranches `5000-5999`, `6000-6999`, etc., jusqu'au sommet
+  de la voie, avec une granularité constante de 1 000 trophées.
 
 Le récap JSON ajoute `accepted_by_segment` (par bande, sur ce run), `candidates_skipped_low`
 et `min_trophies`. Pour revenir à l'ancien crawl FIFO non orienté : `--no-balance`.

@@ -21,6 +21,7 @@ import json
 import math
 import os
 import random
+import re
 import shutil
 import sys
 import threading
@@ -29,6 +30,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections import Counter, deque
+from collections.abc import Iterable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, as_completed, wait
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -237,6 +239,42 @@ def _is_fresh(battle: dict[str, Any], cutoff: datetime | None) -> bool:
         return True
     when = _battle_time(battle)
     return when is not None and when >= cutoff
+
+
+def _parse_cutoff(value: datetime | str | None) -> datetime | None:
+    """Parse an absolute collection boundary and normalize it to UTC."""
+    if value is None or str(value).strip() == "":
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        text = str(value).strip()
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError as error:
+            raise ValueError(
+                f"Invalid collection cutoff {value!r}; use an ISO-8601 timestamp."
+            ) from error
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _freshness_cutoff(
+    max_age_days: float | None,
+    not_before: datetime | str | None,
+    *,
+    now: datetime | None = None,
+) -> datetime | None:
+    """Return the stricter of the rolling age window and season boundary."""
+    absolute = _parse_cutoff(not_before)
+    rolling = (
+        (now or datetime.now(timezone.utc)) - timedelta(days=max_age_days)
+        if max_age_days is not None and max_age_days > 0
+        else None
+    )
+    candidates = [value for value in (absolute, rolling) if value is not None]
+    return max(candidates) if candidates else None
 
 
 def _battle_fingerprint(player_tag: str, battle: dict[str, Any]) -> str:
@@ -845,11 +883,31 @@ def _supabase_tags(limit: int) -> list[str]:
     return [normalize_tag(row[0]) for row in rows if row[0]]
 
 
-def _next_shard_index(raw_dir: Path) -> int:
+def _collector_shard_prefix(collector_id: str | None) -> str:
+    """Return a safe, host-specific shard prefix for shared object storage."""
+    normalized = (collector_id or "").strip().lower()
+    if not normalized:
+        return "api-part"
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,47}", normalized):
+        raise ValueError(
+            "collector_id must contain only lowercase letters, digits, and hyphens "
+            "(maximum 48 characters)"
+        )
+    return f"api-{normalized}-part"
+
+
+def _next_shard_index(
+    raw_dir: Path,
+    shard_prefix: str = "api-part",
+    object_names: Iterable[str] = (),
+) -> int:
+    names = [path.name for path in raw_dir.glob(f"{shard_prefix}-*.parquet")]
+    names.extend(Path(name).name for name in object_names)
     indices = [
-        int(path.stem.split("-")[-1])
-        for path in raw_dir.glob("api-part-*.parquet")
-        if path.stem.split("-")[-1].isdigit()
+        int(Path(name).stem.removeprefix(f"{shard_prefix}-"))
+        for name in names
+        if Path(name).stem.startswith(f"{shard_prefix}-")
+        and Path(name).stem.removeprefix(f"{shard_prefix}-").isdigit()
     ]
     return max(indices, default=-1) + 1
 
@@ -862,6 +920,7 @@ def _fetch_player(
     snowball: bool,
     min_trophies: int,
     max_age_days: float | None = None,
+    not_before: datetime | str | None = None,
 ) -> tuple[list[dict[str, Any]], list[tuple[str, str, int | None]], int, int]:
     """Network worker: battlelog first, profile only if a ranked battle exists.
 
@@ -875,11 +934,7 @@ def _fetch_player(
     so a multi-hour crawl keeps a true rolling window instead of slowly drifting
     to `max_age_days + run duration`.
     """
-    cutoff = (
-        datetime.now(timezone.utc) - timedelta(days=max_age_days)
-        if max_age_days is not None and max_age_days > 0
-        else None
-    )
+    cutoff = _freshness_cutoff(max_age_days, not_before)
     try:
         battles = client.battlelog(tag)
     except (OSError, HTTPException, ValueError):
@@ -928,15 +983,18 @@ def collect_from_api(
     snowball: bool = True,
     max_battles: int | None = None,
     max_players: int | None = None,
+    max_duration_hours: float | None = None,
     requests_per_second: float = 30.0,
     workers: int | None = 0,
     upload: bool = False,
     bucket: str = "training-battles",
     prefix: str = "battles",
+    collector_id: str | None = None,
     shard_size: int = 50_000,
     max_queue: int | None = None,
     min_trophies: int | None = None,
     max_age_days: float | None = None,
+    not_before: datetime | str | None = None,
     balance: bool = True,
     deficit_bias: float = 0.0,
     min_hop: int = 1,
@@ -957,12 +1015,26 @@ def collect_from_api(
 
     raw_dir = config.resolve(config.data["raw_dir"])
     raw_dir.mkdir(parents=True, exist_ok=True)
+    shard_prefix = _collector_shard_prefix(collector_id)
     client = ClashRoyaleClient(
         token_mode=api_token_mode,
         requests_per_second=requests_per_second,
     )
     effective_workers = _effective_worker_count(workers, requests_per_second)
     uploader = StorageClient(bucket, prefix, create=True) if upload else None
+    storage_object_names: set[str] = set()
+    recovered_uploads = 0
+    if uploader is not None:
+        storage_object_names = {Path(name).name for name in uploader.list_objects()}
+        # A process killed during its final upload can leave a valid local shard
+        # that Storage never received. Reconcile those files before advancing the
+        # sequence so a transient outage cannot silently strand collected data.
+        for path in sorted(raw_dir.glob(f"{shard_prefix}-*.parquet")):
+            if path.name in storage_object_names:
+                continue
+            uploader.upload(path.name, path.read_bytes())
+            storage_object_names.add(path.name)
+            recovered_uploads += 1
     deduplicator = Deduplicator(config.resolve(config.data["dedup_db"]))
     allowed_modes = set(config.data.get("allowed_modes") or [])
 
@@ -975,6 +1047,9 @@ def collect_from_api(
         max_age_days = float(config.data.get("collect_max_age_days", 2))
     if max_age_days <= 0:
         max_age_days = None
+    if not_before is None:
+        not_before = config.data.get("collect_not_before")
+    collection_not_before = _parse_cutoff(not_before)
     # Baseline = where battles already are, so balance fills the gaps on disk and
     # a restart resumes the starved bands instead of re-piling onto the core.
     baseline_counts = (
@@ -1014,8 +1089,16 @@ def collect_from_api(
         "fetch_failures": 0,
         "min_trophies": min_trophies,
         "max_age_days": max_age_days,
+        "not_before": (
+            collection_not_before.isoformat() if collection_not_before is not None else None
+        ),
+        "max_duration_hours": max_duration_hours,
         "balance": balance,
         "api_token_mode": api_token_mode,
+        "collector_id": collector_id,
+        "shard_prefix": shard_prefix,
+        "storage_objects_seen": len(storage_object_names),
+        "recovered_uploads": recovered_uploads,
         "api_token_envs": client.token_names,
         "requests_per_second_total": requests_per_second,
         "requested_workers": workers,
@@ -1042,7 +1125,7 @@ def collect_from_api(
         if not buffer:
             return
         table = pa.Table.from_pylist(buffer, schema=SCHEMA)
-        name = f"api-part-{shard_index:06d}.parquet"
+        name = f"{shard_prefix}-{shard_index:06d}.parquet"
         path = raw_dir / name
         pq.write_table(table, path, compression="zstd", row_group_size=50_000)
         if uploader is not None:
@@ -1058,11 +1141,18 @@ def collect_from_api(
     target_inflight = max(effective_workers * 2, effective_workers + 4)
     submitted = 0
     started_at = time.perf_counter()
+    deadline = (
+        started_at + max_duration_hours * 60 * 60
+        if max_duration_hours is not None and max_duration_hours > 0
+        else None
+    )
     last_stats_at = started_at
     last_stats_requests = 0
     last_stats_players = 0
 
     def can_submit() -> bool:
+        if deadline is not None and time.perf_counter() >= deadline:
+            return False
         if max_players is not None and submitted >= max_players:
             return False
         if max_battles is not None and summary["battles_accepted"] >= max_battles:
@@ -1106,7 +1196,7 @@ def collect_from_api(
     try:
         # Resolve the next name only after acquiring the lock; otherwise a process
         # finishing just before this one starts could make the earlier scan stale.
-        shard_index = _next_shard_index(raw_dir)
+        shard_index = _next_shard_index(raw_dir, shard_prefix, storage_object_names)
         with ThreadPoolExecutor(max_workers=effective_workers) as executor:
             inflight: dict[Future, str] = {}
 
@@ -1125,6 +1215,7 @@ def collect_from_api(
                         snowball,
                         min_trophies,
                         max_age_days,
+                        collection_not_before,
                     )
                     inflight[future] = tag
                     submitted += 1
@@ -1188,6 +1279,10 @@ def collect_from_api(
         run_lock.close()
 
     summary["requests"] = client.requests
+    summary["elapsed_seconds"] = time.perf_counter() - started_at
+    summary["stopped_by_duration"] = (
+        deadline is not None and time.perf_counter() >= deadline
+    )
     summary["rate_limited"] = client.rate_limited
     summary["request_errors"] = client.errors
     summary["api_token_stats"] = client.token_stats

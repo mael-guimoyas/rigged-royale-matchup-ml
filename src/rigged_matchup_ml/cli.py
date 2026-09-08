@@ -59,6 +59,12 @@ def collect_api(
     ),
     max_battles: int | None = typer.Option(None, help="Stop after accepting N battles."),
     max_players: int | None = typer.Option(None, help="Stop after processing N players."),
+    max_duration_hours: float | None = typer.Option(
+        None,
+        "--max-duration-hours",
+        min=0.01,
+        help="Stop cleanly after N hours, flushing the last partial shard.",
+    ),
     requests_per_second: float = typer.Option(
         30.0, help="Global CR API request rate cap across all workers."
     ),
@@ -72,6 +78,11 @@ def collect_api(
     ),
     bucket: str = typer.Option("training-battles", help="Storage bucket for shards."),
     prefix: str = typer.Option("battles", help="Object key prefix inside the bucket."),
+    collector_id: str | None = typer.Option(
+        None,
+        "--collector-id",
+        help="Unique machine id used in shard names when several hosts upload together.",
+    ),
     max_queue: int | None = typer.Option(
         None,
         "--max-queue",
@@ -90,6 +101,11 @@ def collect_api(
         "config collect_max_age_days, 2). Use 0 to disable and take the whole "
         "battlelog. Keep it tight after a balance patch so the corpus is pure "
         "new-meta.",
+    ),
+    not_before: str | None = typer.Option(
+        None,
+        "--not-before",
+        help="Reject battles before this ISO-8601 timestamp (default from config).",
     ),
     balance: bool = typer.Option(
         True,
@@ -154,14 +170,17 @@ def collect_api(
         snowball=snowball,
         max_battles=max_battles,
         max_players=max_players,
+        max_duration_hours=max_duration_hours,
         requests_per_second=requests_per_second,
         workers=workers,
         upload=upload,
         bucket=bucket,
         prefix=prefix,
+        collector_id=collector_id,
         max_queue=max_queue,
         min_trophies=min_trophies,
         max_age_days=max_age_days,
+        not_before=not_before,
         balance=balance,
         deficit_bias=deficit_bias,
         min_hop=min_hop,

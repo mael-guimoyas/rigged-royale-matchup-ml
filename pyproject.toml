@@ -27,6 +27,7 @@ serve = ["fastapi>=0.115", "uvicorn[standard]>=0.30"]
 
 [project.scripts]
 rigged-matchup = "rigged_matchup_ml.cli:app"
+rigged-collector = "rigged_matchup_ml.collector_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -69,6 +69,7 @@ def test_supplemental_metadata_covers_recent_vocab_cards() -> None:
         26000102: "Berserker",
         26000103: "Boss Bandit",
         26000106: "Ronin",
+        26000107: "Minion Giant",
         28000023: "Void",
         28000024: "Goblin Curse",
         28000025: "Spirit Empress",
@@ -91,6 +92,24 @@ def test_ronin_metadata_is_correct() -> None:
     assert "high_dps" in ronin["tags"]
     assert "champion" not in ronin["tags"]
     assert elixir_for(26000106) == 5
+
+
+def test_season_87_card_and_hero_metadata() -> None:
+    from rigged_matchup_ml.card_stats import CARD_METADATA_VECTOR_FIELDS as fields
+
+    minion_giant = metadata_for(26000107)
+    assert minion_giant["name"] == "Minion Giant"
+    assert minion_giant["role"] == "win_condition"
+    assert {"flying", "building_target"} <= minion_giant["tags"]
+    assert elixir_for(26000107) == 4
+
+    idx = {name: i for i, name in enumerate(fields)}
+    hero_ice_wizard = metadata_vector_for(26000023, hero=True)
+    assert hero_ice_wizard[idx["state:ability_active"]] == 1.0
+    assert hero_ice_wizard[idx["ability:ability_spawn"]] == 1.0
+    assert hero_ice_wizard[idx["ability:ability_damage"]] == 1.0
+    assert hero_ice_wizard[idx["ability:ability_control"]] == 1.0
+    assert hero_ice_wizard[idx["num:ability_cost"]] > 0.0
 
 
 def test_reflect_flag_is_retired_until_the_next_training_run() -> None:

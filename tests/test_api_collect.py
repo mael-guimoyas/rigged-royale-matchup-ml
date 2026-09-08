@@ -12,12 +12,16 @@ from rigged_matchup_ml.api_collect import (
     RateLimiter,
     _battle_fingerprint,
     _battle_time,
+    _collector_shard_prefix,
     _effective_worker_count,
     _fetch_player,
+    _freshness_cutoff,
     _is_fresh,
     _ladder_bucket_label,
+    _next_shard_index,
     _normalize_baseline,
     _opponent_candidates,
+    _parse_cutoff,
     _resolve_cr_api_tokens,
     _segment_tracked,
     league_from_profile,
@@ -56,6 +60,23 @@ def _battle(battle_type: str = "pathOfLegend", battle_time: str | None = None) -
 def test_normalize_tag() -> None:
     assert normalize_tag(" #abc ") == "#ABC"
     assert normalize_tag("abc") == "#ABC"
+
+
+def test_collector_id_gives_each_host_an_independent_shard_sequence(tmp_path) -> None:
+    assert _collector_shard_prefix(None) == "api-part"
+    assert _collector_shard_prefix("Netcup-01") == "api-netcup-01-part"
+    (tmp_path / "api-part-000004.parquet").touch()
+    (tmp_path / "api-netcup-01-part-000002.parquet").touch()
+    assert _next_shard_index(tmp_path) == 5
+    assert _next_shard_index(tmp_path, "api-netcup-01-part") == 3
+    assert _next_shard_index(
+        tmp_path,
+        "api-netcup-01-part",
+        ["season-87/api-netcup-01-part-000008.parquet"],
+    ) == 9
+
+    with pytest.raises(ValueError, match="collector_id"):
+        _collector_shard_prefix("bad/id")
 
 
 def test_resolve_cr_api_tokens_selects_primary_secondary_or_both(monkeypatch) -> None:
@@ -224,6 +245,17 @@ def test_is_fresh_keeps_recent_drops_old_and_undatable() -> None:
     assert _is_fresh({}, cutoff) is False
     # No window configured: everything passes.
     assert _is_fresh({"battleTime": "20200101T000000.000Z"}, None) is True
+
+
+def test_absolute_collection_cutoff_is_stricter_than_rolling_window() -> None:
+    now = datetime(2026, 9, 9, 12, tzinfo=timezone.utc)
+    season_start = _parse_cutoff("2026-09-07T09:00:00Z")
+
+    assert season_start == datetime(2026, 9, 7, 9, tzinfo=timezone.utc)
+    assert _freshness_cutoff(7, season_start, now=now) == season_start
+    assert _freshness_cutoff(1, season_start, now=now) == datetime(
+        2026, 9, 8, 12, tzinfo=timezone.utc
+    )
 
 
 class _StubClient:

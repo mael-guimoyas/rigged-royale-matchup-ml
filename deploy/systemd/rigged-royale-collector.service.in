@@ -1,0 +1,29 @@
+[Unit]
+Description=Rigged Royale Season 87 battle collector
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=__RUN_USER__
+WorkingDirectory=__REPO_ROOT__
+Environment=PYTHONUNBUFFERED=1
+Environment=COLLECTOR_ID=netcup
+Environment=COLLECTOR_CYCLE_HOURS=6
+Environment=COLLECTOR_RPS=30
+ExecStart=/bin/bash __REPO_ROOT__/scripts/collect_season87.sh
+Restart=always
+RestartSec=20
+KillSignal=SIGINT
+TimeoutStopSec=180
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=__REPO_ROOT__/data __REPO_ROOT__/logs
+
+[Install]
+WantedBy=multi-user.target
