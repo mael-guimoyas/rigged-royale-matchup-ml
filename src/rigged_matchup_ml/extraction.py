@@ -4,6 +4,8 @@ import json
 import os
 import sqlite3
 import time
+from collections import Counter
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -87,6 +89,43 @@ class Deduplicator:
         self.connection.execute("pragma cache_size=-200000")
         self.connection.execute(
             "create table if not exists seen (game_id text primary key) without rowid"
+        )
+        # How many battles this collector has archived per segment, ever.
+        # It lives here rather than being recounted from the Parquet shards
+        # because a collector box deletes its shards once Storage has them: the
+        # on-disk scan then reports a near-empty corpus and the band balancer
+        # steers on a baseline that is wrong by tens of millions of battles.
+        # This table survives the purge for the same reason `seen` must.
+        self.connection.execute(
+            "create table if not exists segment_tally ("
+            "segment text primary key, battles integer not null)"
+        )
+
+    def add_segment_counts(self, counts: Mapping[str, int]) -> None:
+        """Add archived battles to the durable per-segment tally.
+
+        Call after the rows are written and uploaded, like `commit`: an
+        overcount would permanently steer the crawl away from a band that never
+        actually received the battles.
+        """
+        if not counts:
+            return
+        with self.connection:
+            self.connection.executemany(
+                "insert into segment_tally(segment, battles) values (?, ?) "
+                "on conflict(segment) do update set battles = battles + excluded.battles",
+                [(segment, int(count)) for segment, count in counts.items() if count],
+            )
+
+    def segment_counts(self) -> Counter[str]:
+        """The durable per-segment tally, empty before the first archived shard."""
+        return Counter(
+            {
+                str(segment): int(battles)
+                for segment, battles in self.connection.execute(
+                    "select segment, battles from segment_tally"
+                )
+            }
         )
 
     def filter_new(self, records: list[dict[str, Any]]) -> list[dict[str, Any]]:

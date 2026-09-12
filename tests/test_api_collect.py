@@ -10,6 +10,7 @@ from rigged_matchup_ml.api_collect import (
     ClashRoyaleClient,
     CollectorRunLock,
     RateLimiter,
+    _balance_report,
     _battle_fingerprint,
     _battle_time,
     _collector_shard_prefix,
@@ -293,7 +294,7 @@ def test_fetch_player_keeps_only_battles_inside_the_age_window() -> None:
     assert stale == 1
     assert len(records) == 1
     # The stale battle contributes no snowball candidates either.
-    assert "#STALEOPP" not in {tag for tag, _mode, _trophies in candidates}
+    assert "#STALEOPP" not in {candidate[0] for candidate in candidates}
 
 
 def test_fetch_player_without_age_window_keeps_everything() -> None:
@@ -395,8 +396,9 @@ def test_opponent_candidates_carry_trophies_and_mode() -> None:
         "opponent": [{"tag": "#BBB", "startingTrophies": 4000}],
     }
     candidates = _opponent_candidates(battle)
-    assert ("#BBB", "ladder", 4000) in candidates
-    assert ("#AAA", "ladder", 8200) in candidates
+    # A ladder battle carries no league: the trophy is the band.
+    assert ("#BBB", "ladder", 4000, None) in candidates
+    assert ("#AAA", "ladder", 8200, None) in candidates
 
 
 def test_frontier_skips_low_ladder_and_queues_ranked() -> None:
@@ -534,3 +536,94 @@ def test_frontier_bootstraps_from_seeds_when_bands_empty() -> None:
     assert frontier.next_tag() in {"#S1", "#S2"}
     assert frontier.next_tag() in {"#S1", "#S2"}
     assert frontier.next_tag() is None
+
+
+def test_frontier_skips_a_starved_band_too_thin_to_sample() -> None:
+    # The starved band is the one the deficit blend wants, but with two
+    # candidates against the threshold it would be emptied rather than sampled:
+    # that census of whoever happened to be discovered is what skewed the old
+    # steered corpus. Below the depth the proportional draw applies, so the deep
+    # band comes up despite holding far more battles already.
+    baseline = Counter({"ladder:5000-6999": 10, "ladder:12000-13999": 10_000})
+    frontier = BalancedFrontier(
+        seeds=[],
+        buckets=BUCKETS,
+        min_trophies=5000,
+        baseline_counts=baseline,
+        max_queued=None,
+        deficit_bias=1.0,
+        min_queue_depth=50,
+        rng=random.Random(0),
+    )
+    frontier.add([(f"#HIGH{index}", "ladder", 13000) for index in range(200)])
+    frontier.add([("#NEEDY1", "ladder", 6000), ("#NEEDY2", "ladder", 6000)])
+
+    assert (frontier.next_tag() or "").startswith("#HIGH")
+
+
+def test_frontier_serves_a_starved_band_once_deep_enough() -> None:
+    baseline = Counter({"ladder:5000-6999": 10, "ladder:12000-13999": 10_000})
+    frontier = BalancedFrontier(
+        seeds=[],
+        buckets=BUCKETS,
+        min_trophies=5000,
+        baseline_counts=baseline,
+        max_queued=None,
+        deficit_bias=1.0,
+        min_queue_depth=50,
+        rng=random.Random(0),
+    )
+    frontier.add([(f"#HIGH{index}", "ladder", 13000) for index in range(200)])
+    frontier.add([(f"#NEEDY{index}", "ladder", 6000) for index in range(60)])
+
+    assert (frontier.next_tag() or "").startswith("#NEEDY")
+
+
+def test_ranked_candidates_carry_their_league_so_thin_leagues_are_targetable() -> None:
+    # Pooled, ranked scores as one bucket dominated by leagues 1-3, so league 6
+    # can never be the starved band. Carrying the fetched player's league splits
+    # it: matchmaking pairs like with like, so their opponents sit there too.
+    frontier = BalancedFrontier(
+        seeds=[],
+        buckets=BUCKETS,
+        min_trophies=5000,
+        baseline_counts=Counter({"ranked:league-1": 10_000, "ranked:league-6": 10}),
+        max_queued=None,
+        deficit_bias=1.0,
+        rng=random.Random(0),
+    )
+    frontier.add([("#BIG", "ranked", None, 1), ("#THIN", "ranked", None, 6)])
+
+    assert frontier.next_tag() == "#THIN"
+
+
+def test_ranked_candidate_without_a_league_falls_back_to_the_pool() -> None:
+    # No profile resolved: the candidate is still worth queueing, just not
+    # attributable to a league.
+    frontier = BalancedFrontier(
+        seeds=[],
+        buckets=BUCKETS,
+        min_trophies=5000,
+        baseline_counts=Counter(),
+        max_queued=None,
+        rng=random.Random(0),
+    )
+
+    assert frontier.add([("#UNKNOWN", "ranked", None, None)]) == 0
+    assert frontier.next_tag() == "#UNKNOWN"
+
+
+def test_balance_report_pairs_corpus_share_with_run_share() -> None:
+    # A band is only being fixed while its run share exceeds its corpus share.
+    report = _balance_report(
+        Counter({"ladder:14000-14999": 800, "ladder:5000-5999": 200}),
+        Counter({"ladder:14000-14999": 100, "ladder:5000-5999": 100}),
+    )
+
+    assert "corpus=1,000 run=200" in report
+    assert "14000-14999=80.0%>50.0%" in report
+    assert "5000-5999=20.0%>50.0%" in report
+
+
+def test_balance_report_is_empty_before_anything_is_collected() -> None:
+    assert _balance_report(Counter(), Counter()) == ""

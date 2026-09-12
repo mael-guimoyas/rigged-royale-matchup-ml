@@ -13,6 +13,11 @@ Environment=PYTHONUNBUFFERED=1
 Environment=COLLECTOR_ID=netcup
 Environment=COLLECTOR_CYCLE_HOURS=6
 Environment=COLLECTOR_RPS=30
+# Top-up steering for the starved sub-14000 bands. Surfaced here so it can be
+# turned off with `systemctl edit` once they are deep enough, without touching
+# the repo; see scripts/collect_season87.sh for what it trades away.
+Environment=COLLECTOR_DEFICIT_BIAS=0.5
+Environment=COLLECTOR_MIN_QUEUE_DEPTH=500
 ExecStart=/bin/bash __REPO_ROOT__/scripts/collect_season87.sh
 Restart=always
 RestartSec=20

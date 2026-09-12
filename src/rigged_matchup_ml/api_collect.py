@@ -30,7 +30,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections import Counter, deque
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, as_completed, wait
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -293,22 +293,37 @@ def _battle_fingerprint(player_tag: str, battle: dict[str, Any]) -> str:
     return sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _opponent_candidates(battle: dict[str, Any]) -> list[tuple[str, str, int | None]]:
-    """Snowball candidates carrying the trophy level they were discovered at.
+def _opponent_candidates(
+    battle: dict[str, Any], league: int | None = None
+) -> list[tuple[str, str, int | None, int | None]]:
+    """Snowball candidates carrying the band they were discovered at.
 
-    Returns ``(tag, mode_key, starting_trophies)`` for every participant. The
-    trophy lets the frontier bucket a candidate *before* fetching it, so it can
-    skip sub-5000 ladder players (we don't train on them) and steer the crawl
-    toward under-filled trophy bands. Ranked (Path of Legends) battles hide
-    trophies, so ranked candidates carry ``None`` and are always queued.
+    Returns ``(tag, mode_key, starting_trophies, league)`` for every participant.
+    The trophy lets the frontier bucket a candidate *before* fetching it, so it
+    can skip sub-5000 ladder players (we don't train on them) and steer the crawl
+    toward under-filled trophy bands.
+
+    Ranked (Path of Legends) battles hide trophies, so the league of the player
+    whose battlelog this came from is carried instead: matchmaking pairs like
+    with like, so their opponents sit in the same league to within a step. That
+    is what lets the frontier treat each league as its own band rather than
+    pooling all of ranked -- without it the thin high leagues can never be
+    targeted, because the pooled bucket's count is dominated by league 1-3 and
+    is therefore never the starved one. `None` (no profile, or a ladder battle)
+    falls back to the pooled bucket.
     """
     mode_key = mode_key_for(battle)
-    out: list[tuple[str, str, int | None]] = []
+    out: list[tuple[str, str, int | None, int | None]] = []
     for participant in (battle.get("opponent") or []) + (battle.get("team") or []):
         tag = participant.get("tag")
         if tag:
             out.append(
-                (normalize_tag(tag), mode_key, _optional_int(participant.get("startingTrophies")))
+                (
+                    normalize_tag(tag),
+                    mode_key,
+                    _optional_int(participant.get("startingTrophies")),
+                    league if mode_key == "ranked" else None,
+                )
             )
     return out
 
@@ -355,6 +370,52 @@ def _normalize_baseline(counts: Counter[str], buckets: list[int]) -> Counter[str
                 continue
         aligned[segment] += count
     return aligned
+
+
+def _worst_bias_note(win_rates: dict[str, float]) -> str:
+    """The band furthest from a 50% fetched-side win rate, for the status line.
+
+    Surfacing only the worst band keeps the line readable while still making a
+    runaway steering setting obvious: season 87 ran 43.0% to 58.9% collecting
+    proportionally, and 37.2% to 63.5% when the crawl chased starved bands.
+    """
+    if not win_rates:
+        return ""
+    segment, rate = max(win_rates.items(), key=lambda item: abs(item[1] - 0.5))
+    return f" worst_bias={segment}@{100 * rate:.1f}%"
+
+
+def _short_band(segment: str) -> str:
+    """Compact band label for the status line: one token, still unambiguous."""
+    if segment.startswith("ladder:"):
+        return segment[len("ladder:") :]
+    if segment.startswith("ranked:league-"):
+        return f"L{segment[len('ranked:league-'):]}"
+    return segment
+
+
+def _balance_report(corpus: Counter[str], run: Counter[str]) -> str:
+    """Per-band share of the whole corpus against this run's share.
+
+    The pair is the point. The left number is where the corpus stands, the right
+    is what the crawl is currently feeding it: a starved band is only being
+    fixed while its run share sits above its corpus share. A band whose two
+    numbers match is being reproduced, not rebalanced, and one whose run share
+    is lower is still falling behind.
+    """
+    corpus_total = sum(corpus.values())
+    run_total = sum(run.values())
+    if not corpus_total:
+        return ""
+    fields = [
+        f"{_short_band(segment)}="
+        f"{100 * count / corpus_total:.1f}%>"
+        f"{(100 * run[segment] / run_total if run_total else 0.0):.1f}%"
+        for segment, count in sorted(corpus.items(), key=lambda item: -item[1])
+    ]
+    return (
+        f"BALANCE corpus={corpus_total:,} run={run_total:,} " + " ".join(fields)
+    )
 
 
 def _scan_existing_segment_counts(raw_dir: Path) -> Counter[str]:
@@ -413,6 +474,16 @@ class BalancedFrontier:
     the old behaviour for a deliberately unbalanced top-up run; it defaults to
     off, and anything above 0 trades representativeness for coverage.
 
+    `min_queue_depth` is what makes that trade survivable. Serving a starved
+    band is stratified sampling, and stratified sampling is unbiased as long as
+    the draw *inside* a stratum stays random. The old steering broke that in
+    practice: a thin band was drained faster than the crawl refilled it, so the
+    collector stopped sampling the band and started taking a census of whichever
+    players it had happened to discover -- who are the ones passing through.
+    Requiring a band to hold at least `min_queue_depth` candidates before the
+    deficit blend may pick it keeps every steered draw a real random sample;
+    below that threshold the band is skipped and the proportional draw applies.
+
     Seed players are excluded from the corpus by default (`min_hop`): they come
     from a tags file or from `public.players`, i.e. the site's own visitors, who
     are self-selected. Their opponents are not -- those are drawn by the game's
@@ -428,12 +499,14 @@ class BalancedFrontier:
         baseline_counts: Counter[str],
         max_queued: int | None,
         deficit_bias: float = 0.0,
+        min_queue_depth: int = 0,
         rng: random.Random | None = None,
     ) -> None:
         self._buckets = buckets
         self._min_trophies = min_trophies
         self._max_queued = max_queued
         self._deficit_bias = max(0.0, min(1.0, deficit_bias))
+        self._min_queue_depth = max(0, min_queue_depth)
         self._rng = rng or random.Random()
         self._seed_queue: deque[str] = deque(seeds)
         # Lists, not deques: a uniform draw needs random access, and removing the
@@ -451,13 +524,20 @@ class BalancedFrontier:
         ]
 
     def _score(self, bucket: str) -> int:
+        # The pooled bucket only holds candidates whose league is unknown, but
+        # fetching one still lands in some league, so it is scored against all
+        # of ranked. A `ranked:league-N` bucket scores on that league alone --
+        # which is the whole point: pooled, league 6 and 7 are invisible behind
+        # the 10M battles of leagues 1-3 and can never come up as starved.
         if bucket == "ranked":
             return sum(value for key, value in self._counts.items() if key.startswith("ranked:"))
         return self._counts.get(bucket, 0)
 
-    def _classify(self, mode_key: str, trophies: int | None) -> str | None:
+    def _classify(
+        self, mode_key: str, trophies: int | None, league: int | None = None
+    ) -> str | None:
         if mode_key == "ranked":
-            return "ranked"
+            return f"ranked:league-{league}" if league else "ranked"
         if trophies is None or trophies < self._min_trophies:
             return None
         return _ladder_bucket_label(trophies, self._buckets)
@@ -467,19 +547,23 @@ class BalancedFrontier:
 
     def add(
         self,
-        candidates: list[tuple[str, str, int | None]],
+        candidates: Sequence[tuple[str, str, int | None] | tuple[str, str, int | None, int | None]],
         discovered_by: str | None = None,
     ) -> int:
         """Queue new candidates by prospective band. Returns count skipped as low."""
         skipped = 0
         active_queued = self.queue_size()
         hop = self._hops.get(discovered_by, 0) + 1 if discovered_by is not None else 1
-        for tag, mode_key, trophies in candidates:
+        for candidate in candidates:
+            # The league is optional so a caller that cannot resolve one (and
+            # every existing ladder caller) keeps working on the 3-tuple.
+            tag, mode_key, trophies = candidate[0], candidate[1], candidate[2]
+            league = candidate[3] if len(candidate) > 3 else None
             if self._max_queued is not None and active_queued >= self._max_queued:
                 break
             if not tag or tag in self._queued:
                 continue
-            bucket = self._classify(mode_key, trophies)
+            bucket = self._classify(mode_key, trophies, league)
             if bucket is None:
                 skipped += 1
                 continue
@@ -506,10 +590,17 @@ class BalancedFrontier:
         if not live:
             return None
         if self._deficit_bias > 0:
-            worst = min(self._score(bucket) for bucket, _ in live)
-            starved = [bucket for bucket, _ in live if self._score(bucket) == worst]
-            if starved and self._rng.random() < self._deficit_bias:
-                return self._rng.choice(starved)
+            # Only bands deep enough to be sampled rather than emptied qualify.
+            # A band under the threshold is left to the proportional draw, which
+            # keeps filling it at the rate the matchmaker produces it.
+            deep = [
+                (bucket, size) for bucket, size in live if size >= self._min_queue_depth
+            ]
+            if deep:
+                worst = min(self._score(bucket) for bucket, _ in deep)
+                starved = [bucket for bucket, _ in deep if self._score(bucket) == worst]
+                if starved and self._rng.random() < self._deficit_bias:
+                    return self._rng.choice(starved)
         total = sum(size for _, size in live)
         draw = self._rng.randrange(total)
         for bucket, size in live:
@@ -955,10 +1046,10 @@ def _fetch_player(
         except (OSError, HTTPException, ValueError):
             league = None
     records: list[dict[str, Any]] = []
-    candidates: list[tuple[str, str, int | None]] = []
+    candidates: list[tuple[str, str, int | None, int | None]] = []
     for battle in fresh_battles:
         if snowball:
-            candidates.extend(_opponent_candidates(battle))
+            candidates.extend(_opponent_candidates(battle, league))
         mode_key = mode_key_for(battle)
         if allowed_modes and mode_key not in allowed_modes:
             continue
@@ -997,6 +1088,7 @@ def collect_from_api(
     not_before: datetime | str | None = None,
     balance: bool = True,
     deficit_bias: float = 0.0,
+    min_queue_depth: int = 0,
     min_hop: int = 1,
     api_token_mode: str = "1",
     show_progress: bool = True,
@@ -1050,13 +1142,28 @@ def collect_from_api(
     if not_before is None:
         not_before = config.data.get("collect_not_before")
     collection_not_before = _parse_cutoff(not_before)
-    # Baseline = where battles already are, so balance fills the gaps on disk and
-    # a restart resumes the starved bands instead of re-piling onto the core.
-    baseline_counts = (
-        _normalize_baseline(_scan_existing_segment_counts(raw_dir), trophy_buckets)
-        if balance
-        else Counter()
-    )
+    # Baseline = every battle this collector has already archived, so balance
+    # fills the real gaps and a restart resumes the starved bands instead of
+    # re-piling onto the core.
+    #
+    # It reads the durable tally, NOT the shards on disk: a collector box that
+    # deletes its shards once Storage has them would otherwise report an almost
+    # empty corpus and steer as if 43M battles had never been collected. The
+    # disk scan is kept only to seed the tally the first time (a collector
+    # upgrading mid-season still has some shards around), and as the answer for
+    # a fresh box where both are empty anyway.
+    baseline_counts: Counter[str] = Counter()
+    baseline_source = "disabled"
+    if balance:
+        baseline_counts = deduplicator.segment_counts()
+        baseline_source = "tally"
+        if not baseline_counts:
+            baseline_counts = _scan_existing_segment_counts(raw_dir)
+            baseline_source = "disk-scan"
+            # Persist it so the next cycle survives the purge that is about to
+            # make this scan useless.
+            deduplicator.add_segment_counts(baseline_counts)
+        baseline_counts = _normalize_baseline(baseline_counts, trophy_buckets)
     if max_queue is not None and max_queue <= 0:
         max_queued = None
     elif max_queue is not None:
@@ -1073,6 +1180,7 @@ def collect_from_api(
         baseline_counts,
         max_queued,
         deficit_bias=deficit_bias if balance else 0.0,
+        min_queue_depth=min_queue_depth,
     )
 
     buffer: list[dict[str, Any]] = []
@@ -1094,6 +1202,10 @@ def collect_from_api(
         ),
         "max_duration_hours": max_duration_hours,
         "balance": balance,
+        "deficit_bias": deficit_bias if balance else 0.0,
+        "min_queue_depth": min_queue_depth,
+        "baseline_source": baseline_source,
+        "baseline_battles": sum(baseline_counts.values()),
         "api_token_mode": api_token_mode,
         "collector_id": collector_id,
         "shard_prefix": shard_prefix,
@@ -1108,7 +1220,20 @@ def collect_from_api(
         "max_queue": max_queued,
     }
     run_by_segment: Counter[str] = Counter()
+    # Wins of the *fetched* side per band. Every battle enters the corpus from
+    # the fetched player's perspective, so this rate is the live read-out of the
+    # sampling bias: a band whose fetched side wins 63% is being sampled from
+    # players passing through it, not living in it. Reported per run so a bad
+    # steering setting shows up after one cycle instead of after a retrain.
+    run_wins_by_segment: Counter[str] = Counter()
     failure_kinds: Counter[str] = Counter()
+
+    def segment_win_rates(minimum: int = 1000) -> dict[str, float]:
+        return {
+            segment: round(run_wins_by_segment[segment] / total, 4)
+            for segment, total in run_by_segment.items()
+            if total >= minimum
+        }
     progress = tqdm(desc="CR API players", unit="player", disable=not show_progress)
     if show_progress and balance and baseline_counts:
         top = ", ".join(
@@ -1131,6 +1256,10 @@ def collect_from_api(
         if uploader is not None:
             uploader.upload(name, path.read_bytes())
             summary["uploaded"] += 1
+        # Only now are these battles durably archived, so only now do they count
+        # toward the balance baseline. Tallying them at accept time would inflate
+        # a band whose shard never made it out of the process.
+        deduplicator.add_segment_counts(Counter(record["segment"] for record in buffer))
         summary["shards_written"] += 1
         shard_index += 1
         buffer.clear()
@@ -1184,10 +1313,17 @@ def collect_from_api(
             f"accepted={summary['battles_accepted']:,} "
             f"stale={summary['battles_skipped_stale']:,} "
             f"queued={frontier.queue_size():,} "
-            f"429={client.rate_limited:,}",
+            f"429={client.rate_limited:,}"
+            f"{_worst_bias_note(segment_win_rates())}",
             file=sys.stderr,
             flush=True,
         )
+        # The live balance read-out, on its own line so it stays greppable.
+        # `baseline_counts + run_by_segment` is the corpus as it stands right
+        # now, including everything this cycle has already added.
+        report = _balance_report(baseline_counts + run_by_segment, run_by_segment)
+        if report:
+            print(report, file=sys.stderr, flush=True)
         last_stats_at = now
         last_stats_requests = client.requests
         last_stats_players = summary["players_processed"]
@@ -1251,6 +1387,8 @@ def collect_from_api(
                         for record in accepted:
                             frontier.record_accept(record["segment"])
                             run_by_segment[record["segment"]] += 1
+                            if record["win"]:
+                                run_wins_by_segment[record["segment"]] += 1
                     if snowball:
                         summary["candidates_skipped_low"] += frontier.add(
                             candidates, discovered_by=tag
@@ -1290,5 +1428,14 @@ def collect_from_api(
     summary["bucket"] = bucket if upload else None
     summary["raw_dir"] = str(raw_dir)
     summary["accepted_by_segment"] = dict(run_by_segment)
+    # The bias read-out for this run. Compare it across cycles before trusting a
+    # raised deficit_bias: coverage is only worth having if these stay near 0.5.
+    summary["fetched_side_win_rate_by_segment"] = segment_win_rates()
+    corpus_counts = baseline_counts + run_by_segment
+    corpus_total = sum(corpus_counts.values())
+    summary["corpus_share_by_segment"] = {
+        segment: round(count / corpus_total, 5)
+        for segment, count in sorted(corpus_counts.items(), key=lambda item: -item[1])
+    } if corpus_total else {}
     summary["fetch_failure_kinds"] = dict(failure_kinds)
     return summary
