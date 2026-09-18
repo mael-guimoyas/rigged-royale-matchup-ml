@@ -18,6 +18,7 @@ from .config import AppConfig
 from .dataset import load_vocabulary, matchup_dataloader
 from .metrics import binary_metrics, binary_metrics_by_group
 from .model import SymmetricMatchupModel
+from .training_weights import segment_weights
 
 
 def _device(name: str) -> torch.device:
@@ -114,20 +115,67 @@ def _card_weight_tensor(
     return torch.tensor(weights, dtype=torch.float32, device=device)
 
 
+def _segment_weight_tensor(
+    prepared_dir: Path,
+    vocabulary: dict[str, dict[str, int]],
+    power: float,
+    cap: float,
+    device: torch.device,
+) -> torch.Tensor | None:
+    """Per-segment weight indexed by the segment vocabulary, mean 1 over train rows.
+
+    Corrects the crawl's uneven segment coverage: the balanced frontier, the trophy
+    floor and snowball clustering leave some bands ten times fuller than others, and
+    an unweighted loss simply belongs to the fullest one.
+
+    The weight is a function of the segment alone -- it never sees `win`, so it
+    cannot teach an outcome. Index 0 is the unknown-segment slot and stays at 1: a
+    segment missing from train must not be silently dropped from the loss, which a
+    weight of 0 would do. Normalisation happens after the cap (unlike the card
+    weights above), so the loss scale is preserved exactly.
+    """
+    path = prepared_dir / "segment_frequencies.json"
+    if not path.exists():
+        return None
+    counts = json.loads(path.read_text(encoding="utf-8"))
+    computed = segment_weights(counts, power=power, cap=cap)
+    if not computed:
+        return None
+    segment_vocabulary = vocabulary["segments"]
+    weights = np.ones(len(segment_vocabulary) + 1, dtype=np.float64)
+    for segment, index in segment_vocabulary.items():
+        weights[index] = computed.get(str(segment), 1.0)
+    return torch.tensor(weights, dtype=torch.float32, device=device)
+
+
 def _weighted_bce(
     loss_none: nn.Module,
     logits: torch.Tensor,
     target: torch.Tensor,
-    card_weight: torch.Tensor,
+    card_weight: torch.Tensor | None,
     team_cards: torch.Tensor,
     opponent_cards: torch.Tensor,
+    segment_weight: torch.Tensor | None = None,
+    segments: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """BCE re-weighted per sample by the rarity of the 16 cards in the matchup."""
-    pair_weights = torch.cat(
-        [card_weight[team_cards], card_weight[opponent_cards]], dim=1
-    )
-    valid = pair_weights > 0
-    sample_weight = pair_weights.sum(dim=1) / valid.sum(dim=1).clamp_min(1)
+    """BCE re-weighted per sample by card rarity, by segment rarity, or by both.
+
+    Both components carry a mean of 1 over the train rows, so their product does too
+    up to their correlation, and switching either on leaves the loss scale -- and the
+    effective learning rate -- where it was.
+    """
+    sample_weight: torch.Tensor | None = None
+    if card_weight is not None:
+        pair_weights = torch.cat(
+            [card_weight[team_cards], card_weight[opponent_cards]], dim=1
+        )
+        valid = pair_weights > 0
+        sample_weight = pair_weights.sum(dim=1) / valid.sum(dim=1).clamp_min(1)
+    if segment_weight is not None and segments is not None:
+        component = segment_weight[segments]
+        sample_weight = component if sample_weight is None else sample_weight * component
+    if sample_weight is None:
+        return loss_none(logits, target).mean()
     return (loss_none(logits, target) * sample_weight).mean()
 
 
@@ -406,10 +454,10 @@ def train_model(config: AppConfig) -> Path:
         optimizer = torch.optim.AdamW(model.parameters(), **optimizer_options)
     loss_fn = nn.BCEWithLogitsLoss()
     loss_none = nn.BCEWithLogitsLoss(reduction="none")
+    frequencies_dir = config.training.get("card_frequencies_path")
+    frequencies_dir = config.resolve(frequencies_dir) if frequencies_dir else prepared_dir
     card_weight: torch.Tensor | None = None
     if bool(config.training.get("loss_card_frequency_weighting", False)):
-        frequencies_dir = config.training.get("card_frequencies_path")
-        frequencies_dir = config.resolve(frequencies_dir) if frequencies_dir else prepared_dir
         card_weight = _card_weight_tensor(
             frequencies_dir,
             vocabulary,
@@ -418,6 +466,20 @@ def train_model(config: AppConfig) -> Path:
             device,
         )
         print(json.dumps({"loss_card_frequency_weighting": card_weight is not None}))
+    # Segment weighting corrects *collection* coverage, card weighting corrects deck
+    # popularity: they are independent axes and compose multiplicatively. Train loss
+    # only -- the validation loss that selects the checkpoint, the calibration fitted
+    # on validation and every reported metric stay on the real population.
+    segment_weight: torch.Tensor | None = None
+    if bool(config.training.get("loss_segment_frequency_weighting", False)):
+        segment_weight = _segment_weight_tensor(
+            frequencies_dir,
+            vocabulary,
+            float(config.training.get("loss_segment_power", 0.3)),
+            float(config.training.get("loss_segment_cap", 3.0)),
+            device,
+        )
+        print(json.dumps({"loss_segment_frequency_weighting": segment_weight is not None}))
     label_smoothing = float(config.training.get("label_smoothing", 0.0))
     use_amp = device.type == "cuda"
     scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
@@ -455,7 +517,7 @@ def train_model(config: AppConfig) -> Path:
                 target = target * (1.0 - label_smoothing) + 0.5 * label_smoothing
             with torch.autocast(device_type=device.type, enabled=use_amp):
                 logits = model(batch)
-                if card_weight is not None:
+                if card_weight is not None or segment_weight is not None:
                     loss = _weighted_bce(
                         loss_none,
                         logits,
@@ -463,6 +525,8 @@ def train_model(config: AppConfig) -> Path:
                         card_weight,
                         batch["team_cards"],
                         batch["opponent_cards"],
+                        segment_weight,
+                        batch["segment"],
                     )
                 else:
                     loss = loss_fn(logits, target)

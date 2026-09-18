@@ -10,9 +10,11 @@ from typing import Any
 
 import duckdb
 
+from .api_collect import _segment_tracked
 from .card_stats import CARD_ELIXIR
 from .config import AppConfig
 from .domain import ranked_league_buckets
+from .training_weights import segment_weights, weighting_report
 
 
 def _quoted(path: Path) -> str:
@@ -127,6 +129,39 @@ def prepare_splits(config: AppConfig, overwrite: bool = False) -> dict[str, Any]
                 f"max_history_days={max_history_days} dropped every battle; widen the window."
             )
 
+    # Out-of-scope segments. The collector already refuses sub-`collect_min_trophies`
+    # ladder, but legacy shards still carry it, and `ladder:unknown` cannot be mapped
+    # to any band at all. Neither is a population this model is ever asked about, so
+    # they skew the training mix for nothing. Dropped BEFORE the quantiles: cutoffs
+    # computed on rows that are deleted afterwards no longer split 70/15/15.
+    min_trophies = int(config.data.get("collect_min_trophies", 5000))
+    drop_out_of_scope = bool(config.data.get("drop_out_of_scope_segments", True))
+    dropped_out_of_scope: dict[str, int] = {}
+    if drop_out_of_scope:
+        out_of_scope = {
+            str(segment): int(row_count)
+            for segment, row_count in connection.execute(
+                "select segment, count(*) from raw_dedup group by segment"
+            ).fetchall()
+            if not _segment_tracked(str(segment), min_trophies)
+        }
+        if out_of_scope:
+            values = ", ".join(
+                "'" + segment.replace("'", "''") + "'" for segment in out_of_scope
+            )
+            connection.execute(f"delete from raw_dedup where segment in ({values})")
+            dropped_out_of_scope = out_of_scope
+            dedup_total -= sum(out_of_scope.values())
+            _log(
+                f"prepare: dropped {sum(out_of_scope.values()):,} out-of-scope rows "
+                f"from {sorted(out_of_scope)}"
+            )
+            if dedup_total == 0:
+                raise RuntimeError(
+                    "Dropping out-of-scope segments removed every battle; check "
+                    "collect_min_trophies or set data.drop_out_of_scope_segments to false."
+                )
+
     _log("prepare: computing chronological train/validation cutoffs")
     quantiles = connection.execute(
         """
@@ -239,6 +274,39 @@ def prepare_splits(config: AppConfig, overwrite: bool = False) -> dict[str, Any]
     (prepared_dir / "card_frequencies.json").write_text(
         json.dumps(card_counts, indent=2, sort_keys=True), encoding="utf-8"
     )
+    # Per-segment train counts, for the label-blind segment weighting in the loss.
+    # The crawl does not sample segments evenly, so without this the loss belongs to
+    # the saturated band. Counts and wins are read together, but only the counts feed
+    # the weight -- the win column exists solely to report the population shift the
+    # weighting causes, never to compute it.
+    _log("prepare: counting per-segment train frequencies")
+    segment_frequency_rows = connection.execute(
+        f"""
+        select segment, count(*) as row_count, sum(case when win then 1 else 0 end) as wins
+        from read_parquet('{train_file}')
+        group by segment
+        """
+    ).fetchall()
+    segment_counts = {str(row[0]): int(row[1]) for row in segment_frequency_rows}
+    segment_wins = {str(row[0]): int(row[2] or 0) for row in segment_frequency_rows}
+    (prepared_dir / "segment_frequencies.json").write_text(
+        json.dumps(segment_counts, indent=2, sort_keys=True), encoding="utf-8"
+    )
+    # Read defensively: `prepare` has never needed the training section, and a
+    # prepare-only config must not start failing because of a reporting block.
+    training_config = config.raw.get("training") or {}
+    segment_power = float(training_config.get("loss_segment_power", 0.3))
+    segment_cap = float(training_config.get("loss_segment_cap", 3.0))
+    weights = segment_weights(segment_counts, power=segment_power, cap=segment_cap)
+    weighting = weighting_report(segment_counts, segment_wins, weights)
+    for warning in weighting["warnings"]:
+        _log(f"prepare: WARNING {warning['message']}")
+    _log(
+        "prepare: segment weighting "
+        f"effective_sample={weighting['effective_sample_fraction']:.1%} "
+        f"weight_ratio={weighting['weight_ratio']:.2f} "
+        f"win_rate_shift={weighting['win_rate_shift']:+.4f}"
+    )
     # Cards the corpus contains but the train period does not: a card released
     # after the train cutoff cannot be learned, only evaluated. Surfacing it here
     # is the signal to collect more post-release battles or to shorten
@@ -268,6 +336,15 @@ def prepare_splits(config: AppConfig, overwrite: bool = False) -> dict[str, Any]
         "unique_rows": dedup_total,
         "duplicates_removed": raw_total - dedup_total,
         "dropped_before_history_window": dropped_old,
+        "dropped_out_of_scope": dropped_out_of_scope,
+        "drop_out_of_scope_segments": drop_out_of_scope,
+        "sample_weighting": {
+            **weighting,
+            "power": segment_power,
+            "cap": segment_cap,
+            "weights": weights,
+            "applies_to": "train loss only; validation/test stay unweighted",
+        },
         "max_history_days": max_history_days,
         "history_cutoff_epoch": history_cutoff_epoch,
         "train_cutoff_epoch": train_cutoff,

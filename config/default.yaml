@@ -32,6 +32,11 @@ data:
   # collect-api drops ladder battles/opponents below this trophy count: we don't
   # train on sub-5000 ladder, and queueing them only bloats the crawl frontier.
   collect_min_trophies: 5000
+  # prepare drops segments the collector itself refuses (sub-collect_min_trophies
+  # ladder from legacy shards, unplaceable ladder:unknown) before the chronological
+  # cut. They are population the model is never asked about, so they only skew the
+  # training mix. Dropped before the cutoffs, otherwise the split stops being 70/15/15.
+  drop_out_of_scope_segments: true
   # collect-api drops battles played more than this many days ago. The battlelog
   # of an inactive player is mostly pre-patch games; keeping them would blend two
   # metas in the same training corpus. 0 disables the filter.
@@ -124,6 +129,16 @@ training:
   loss_card_frequency_weighting: true
   loss_frequency_power: 0.3
   loss_frequency_cap: 5.0
+  # Same idea one level up: the crawl does not sample segments evenly, so without
+  # this the loss belongs to the saturated trophy band. Weights, never resampling --
+  # duplicating a battle repeats its noisy win/loss label instead of adding
+  # information. power < 1 moves only part of the way to a uniform population, cap
+  # bounds the largest/smallest weight ratio so a starved band cannot steer the model
+  # with a handful of noisy labels. Train loss only; `prepare` reports the resulting
+  # effective sample size in manifest.json under `sample_weighting`.
+  loss_segment_frequency_weighting: true
+  loss_segment_power: 0.3
+  loss_segment_cap: 3.0
 
 evaluation:
   bad_threshold: 0.40

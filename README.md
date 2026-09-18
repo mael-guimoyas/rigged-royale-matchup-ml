@@ -242,6 +242,55 @@ retard, au prix d'un biais de sélection. Chaque adversaire snowballé porte ses
 Le récap JSON ajoute `accepted_by_segment` (par bande, sur ce run), `candidates_skipped_low`
 et `min_trophies`. Pour revenir à l'ancien crawl FIFO non orienté : `--no-balance`.
 
+#### Vérification de biais après collecte
+
+`accepted_by_segment` ne décrit qu'un run. Le corpus, lui, est la somme de tous les runs
+passés, avec leurs seuils et leurs fenêtres d'alors. Cette commande audite les shards eux-
+mêmes — jamais l'état interne du collecteur — donc elle marche aussi sur un corpus
+récupéré depuis Storage sur une machine qui n'a jamais collecté :
+
+```powershell
+rigged-matchup diagnose-bias
+rigged-matchup diagnose-bias --raw-dir data/raw-nouvelle-meta --min-card-support 2000
+rigged-matchup diagnose-bias --skip-cards --fail-on-warn
+```
+
+Le rapport part dans `artifacts/collection-bias-report.json`, avec un `status` (`ok` /
+`warn`) et une liste `warnings` où chaque entrée porte un `code` et une explication.
+`--fail-on-warn` fait sortir la commande en code 1 : utile pour enchaîner
+collecte → vérification → entraînement sans relire le JSON à la main.
+`--skip-cards` saute la passe par carte (16 lignes par combat) sur un très gros corpus.
+
+Ce qui est vérifié, et ce que ça veut dire quand ça tombe :
+
+- **`side_balance`** — les enregistrements sont orientés « joueur crawlé = team ». Un
+  battlelog contient ses victoires *et* ses défaites, donc le taux de victoire côté team
+  doit valoir 0,5. Un vrai écart signifie que le crawl sélectionne les joueurs selon
+  l'issue ; le modèle étant antisymétrique, il ne *peut pas* absorber ce biais, il le
+  subit en bruit. Vérifié aussi par segment (au-delà de 5000 lignes).
+- **`orientation_drift`** — distance de variation totale entre la distribution des cartes
+  côté crawlé et côté adversaire. Les joueurs crawlés sont dirigés par le balancer, leurs
+  adversaires non : si les deux côtés divergent, l'augmentation par inversion des camps
+  masque un écart réel au lieu de le corriger.
+- **`missing_bands` / `segment_imbalance`** — bandes de trophées suivies vides, ou rapport
+  plein/vide supérieur à 10. C'est la question que `--balance` pose au démarrage, reposée
+  après coup. Les vieux shards à bornes larges (`ladder:12000-99998`) sont repliés sur les
+  bornes actuelles avant le calcul, sinon une bande scindée paraîtrait vide.
+- **`untracked_rows`** — combats restés dans des segments que le collecteur ne garde plus
+  (ladder sous `collect_min_trophies`, segments improbables). Ils partent quand même à
+  l'entraînement tant qu'ils sont sur le disque.
+- **`stale_battles` / `missing_battle_time`** — combats plus vieux que la fenêtre de
+  collecte, mesurée depuis le combat le plus récent du corpus : deux métas mélangées. La
+  fenêtre `--max-age-days` s'applique à la collecte, pas aux shards déjà écrits.
+- **`deck_concentration` / `mirror_matches`** — masse concentrée sur quelques decks, ou
+  trop de miroirs. Signature d'un snowball qui a tourné dans un cluster dense (un clan,
+  une région) au lieu de parcourir la méta.
+- **`duplicate_games`** — `game_id` répétés : la déduplication a fui et ces matchups pèsent
+  double.
+- **`cards_absent` / `cards_thin`** — cartes de la table statique sans données ou presque.
+  Complément direct de `cards_absent_from_train` côté `prepare` : ici on voit le manque
+  avant même de découper les splits.
+
 Storage est du stockage objet : ces shards sont lus en masse par `prepare`/l'entraînement,
 jamais ligne par ligne. C'est le bon support pour un corpus d'entraînement. Remplis Storage
 d'abord, vérifie l'entraînement, puis seulement supprime `raw` de Postgres.
@@ -265,6 +314,72 @@ Pour reconstruire les splits :
 ```powershell
 rigged-matchup prepare --overwrite
 ```
+
+#### Correction des biais de collecte
+
+`diagnose-bias` mesure, `prepare` corrige. Trois corrections, et surtout une liste de
+choses volontairement **non** corrigées — c'est là que se fabriquent les nouveaux biais.
+
+**1. Déduplication** (déjà en place) — un `game_id` vu deux fois est le même combat ; le
+garder en double donne un poids double à ce matchup. Aveugle au résultat.
+
+**2. Segments hors périmètre** (`data.drop_out_of_scope_segments`, activé par défaut) — le
+ladder sous `collect_min_trophies` et les `ladder:unknown` des vieux shards sont retirés
+**avant** le calcul des quantiles. L'ordre compte : couper à 70/15/15 puis supprimer des
+lignes donne un découpage qui n'est plus 70/15/15. C'est une population que le modèle ne
+sert jamais, donc la retirer restreint le périmètre au lieu de fausser la mesure.
+`manifest.json` liste le décompte exact par segment dans `dropped_out_of_scope`.
+
+**3. Pondération par segment** (`training.loss_segment_frequency_weighting`) — le crawl
+n'échantillonne pas les bandes uniformément, donc la loss appartient à la bande saturée.
+`prepare` écrit `segment_frequencies.json`, l'entraînement en déduit un poids par segment,
+multiplié avec la pondération par rareté de carte déjà en place.
+
+Les garde-fous, qui sont le cœur du sujet :
+
+- **Pondération, jamais rééchantillonnage.** Dupliquer un combat d'une bande pauvre répète
+  son étiquette `win/loss` bruitée : la taille d'échantillon effective n'augmente pas, le
+  modèle a juste plus d'occasions de mémoriser un combat. Sous-échantillonner la bande
+  saturée jette des observations réelles. Le poids garde toutes les lignes et ne déplace
+  que la masse de gradient.
+- **Ratio borné** (`loss_segment_cap`, 3 par défaut). L'inverse de fréquence pur donnerait
+  un poids ~500 à une bande de 2000 combats : le modèle entier serait piloté par 2000
+  étiquettes bruitées. On aurait troqué un biais de couverture contre un biais de variance.
+  `loss_segment_power: 0.3` ne fait qu'une partie du chemin vers une population uniforme —
+  l'uniforme n'est pas plus « vrai » que l'observé, juste différent.
+- **Moyenne exactement 1.** L'échelle de la loss, donc le pas d'apprentissage effectif, ne
+  bouge pas quand on active la pondération.
+- **Fonction du segment seul.** Le poids ne voit jamais `win` : à l'intérieur d'un segment
+  il est constant et ne peut pas enseigner un résultat. Un test le verrouille.
+- **Train uniquement.** Validation et test restent non pondérés : ils décrivent la
+  population réelle, la calibration s'apprend dessus et la sélection du checkpoint utilise
+  leur log-loss brute. Pondérer l'évaluation reviendrait à mesurer sur une population qui
+  n'existe pas.
+
+`manifest.json` gagne un bloc `sample_weighting` qui sert de preuve :
+
+- `effective_sample_fraction` — la taille d'échantillon effective de Kish rapportée au
+  nombre de lignes. C'est **le** chiffre qui dit combien de variance a été achetée. Sous
+  50 %, `prepare` avertit : baisse `loss_segment_power` ou `loss_segment_cap` ;
+- `win_rate` / `weighted_win_rate` / `win_rate_shift` — le déplacement du taux de victoire
+  global. Il n'est pas nul par magie : si les segments ont des taux de base différents, le
+  repondérer les mélange autrement. Un écart notable est signalé, car le modèle
+  antisymétrique ne peut pas absorber un biais global — c'est un défaut de collecte à
+  corriger en amont, pas ici ;
+- `weight_ratio`, et la part avant/après de chaque segment.
+
+Ce qui n'est **pas** corrigé, délibérément :
+
+- **La concentration de decks.** Repondérer par deck se composerait multiplicativement avec
+  la pondération par rareté de carte déjà active, et les poids partiraient loin. Les decks
+  populaires sont aussi ceux sur lesquels on pose des questions. On mesure, on ne corrige pas.
+- **L'orientation team/adversaire.** L'architecture est antisymétrique — `P(A>B) = 1-P(B>A)`
+  par construction — et l'augmentation tire l'inversion à 50 % par ligne et par époque. Un
+  `orientation_drift` élevé est un symptôme de collecte, pas quelque chose à retoucher dans
+  le dataset.
+- **Le mélange de métas.** `max_history_days` reste manuel : le resserrer retire des données
+  et fait perdre du support aux cartes récentes. Arbitrage à faire en regardant
+  `card_frequencies.json`, pas un défaut à automatiser.
 
 ### 3. Entraînement
 
@@ -577,10 +692,12 @@ ou entraîne prioritairement sur les modes aux niveaux standardisés.
 src/rigged_matchup_ml/
   extraction.py       extraction Supabase et déduplication
   api_collect.py      collecte directe API CR vers Parquet local + Supabase Storage
+  collection_bias.py  audit de biais d'échantillonnage des shards bruts
   domain.py           parsing cartes, héros, évolutions et segments
   prepare.py          Parquet, splits temporels et vocabulaires
   empirical_prior.py  prior empirique train-only et diagnostics par segment
   model.py            encodeur de decks et réseau antisymétrique
+  training_weights.py pondération par segment, aveugle aux labels, et son rapport
   trainer.py          entraînement, warmup+cosine, label smoothing et calibration
   metrics.py          AUC, log-loss, Brier, calibration (slope, ECE quantile) et bootstrap
   benchmark.py        baselines, plancher de bruit irréductible et rapport comparatif

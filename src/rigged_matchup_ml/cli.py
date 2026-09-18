@@ -8,6 +8,7 @@ import typer
 from .api_collect import collect_from_api, download_from_storage, upload_to_storage
 from .benchmark import benchmark_model
 from .card2vec import pretrain_card_embeddings
+from .collection_bias import collection_bias_report
 from .config import load_config
 from .diagnostics import diagnose_ranked_segments
 from .empirical_prior import attach_empirical_prior
@@ -301,6 +302,57 @@ def diagnose_ranked_segments_command(
     """Report ranked league coverage and whether unknown rows can be backfilled."""
     result = diagnose_ranked_segments(load_config(config), sample_size=sample_size)
     typer.echo(json.dumps(result, indent=2))
+
+
+@app.command("diagnose-bias")
+def diagnose_bias_command(
+    config: Path = DEFAULT_CONFIG,
+    raw_dir: Path | None = typer.Option(
+        None, help="Shard directory to audit. Defaults to data.raw_dir from the config."
+    ),
+    output: Path | None = typer.Option(
+        None, help="Report destination. Defaults to <artifact_dir>/collection-bias-report.json."
+    ),
+    min_card_support: int = typer.Option(
+        1000, help="Flag cards appearing fewer than this many times across both sides."
+    ),
+    top_n: int = typer.Option(20, help="How many decks/matchups/divergent cards to list."),
+    skip_cards: bool = typer.Option(
+        False,
+        "--skip-cards",
+        help="Skip the per-card pass (16 rows per battle) on a very large corpus.",
+    ),
+    fail_on_warn: bool = typer.Option(
+        False,
+        "--fail-on-warn",
+        help="Exit non-zero when the report raises a warning, for CI or a notifier.",
+    ),
+) -> None:
+    """Audit the collected corpus for sampling bias before training on it.
+
+    Reads the raw shards only, so it audits a corpus pulled from Storage just as
+    well as one this machine collected. Writes the full report as JSON and echoes
+    it; `status` is `ok` or `warn` and `warnings` explains every flag.
+    """
+    loaded = load_config(config)
+    result = collection_bias_report(
+        loaded,
+        raw_dir=raw_dir,
+        min_card_support=min_card_support,
+        top_n=top_n,
+        include_cards=not skip_cards,
+    )
+    destination = output
+    if destination is None:
+        artifact_dir = loaded.resolve(loaded.training["artifact_dir"])
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        destination = artifact_dir / "collection-bias-report.json"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    result["report_path"] = str(destination)
+    typer.echo(json.dumps(result, indent=2))
+    if fail_on_warn and result["status"] != "ok":
+        raise typer.Exit(code=1)
 
 
 @app.command()
