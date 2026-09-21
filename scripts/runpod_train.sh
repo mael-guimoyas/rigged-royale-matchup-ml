@@ -138,9 +138,11 @@ PY
 if [[ ! -f "$PREPARED_DIR/manifest.json" ]]; then
   if [[ -n "${SUPABASE_URL:-}" && -n "${SUPABASE_SECRET_KEY:-}" ]]; then
     log_step "Pulling raw Parquet shards from Supabase Storage"
+    # season-87-balanced with bot battles removed (fixed loadouts seen >= 300 times at
+    # <= 40% win rate). Bots drag popular decks down and skew the crawled-side win rate.
     rigged-matchup pull-storage --config "$CONFIG_PATH" \
       --bucket "${TRAINING_BUCKET:-training-battles}" \
-      --prefix "${TRAINING_PREFIX:-battles}" \
+      --prefix "${TRAINING_PREFIX:-season-87-balanced-nobots}" \
       --workers "${STORAGE_DOWNLOAD_WORKERS:-16}"
     log_step "Preparing chronological train/validation/test splits"
     rigged-matchup prepare --config "$CONFIG_PATH" --overwrite

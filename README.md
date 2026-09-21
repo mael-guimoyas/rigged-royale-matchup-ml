@@ -381,6 +381,32 @@ Ce qui n'est **pas** corrigé, délibérément :
   et fait perdre du support aux cartes récentes. Arbitrage à faire en regardant
   `card_frequencies.json`, pas un défaut à automatiser.
 
+#### Combats contre des bots
+
+Le ladder contient des bots : configuration figée (mêmes cartes, mêmes niveaux Evo/Hero,
+même tour), des milliers de parties par jour, trophées constants malgré ~90 % de défaites.
+Ils jouent des decks de méta, donc leurs défaites tirent ces decks vers le bas (« deck
+populaire à 30 % sur une tranche ») et gonflent le win rate du côté crawlé, qui les croise
+surtout comme adversaires. `diagnose-bias` ne les voit pas : ils ne se signalent que par
+leur win rate, pas par un déséquilibre de collecte.
+
+Les shards n'ont pas de tag joueur, donc on identifie la **configuration** : une
+configuration vue au moins 300 fois (deux côtés confondus) avec au plus 40 % de victoires
+est un bot, et tout combat où un des deux côtés la joue est retiré.
+
+```powershell
+python scripts/filter_bot_battles.py data/season-87-balanced/raw data/season-87-balanced-nobots --memory-limit 2GB --threads 2
+rigged-matchup upload-storage --config config/season-87-balanced-nobots.yaml --prefix season-87-balanced-nobots
+```
+
+`filter-manifest.json` donne la règle et la part retirée par segment ; `bot_loadouts.parquet`
+les configurations retirées. Mesuré en A/B sur 5 % de season-87 : sans les bots, les decks
+populaires ne sont plus sous-estimés (−3 pts → ~0 sur les combats entre joueurs) et
+`prepare` ne déclenche plus l'alerte `win_rate_shift`. Limites : c'est une heuristique —
+un bot qui varie sa configuration sous 300 parties passe, et une configuration « débutant »
+partagée par des joueurs faibles peut être prise à tort ; sans tag joueur on ne peut pas
+faire mieux.
+
 ### 3. Entraînement
 
 Option recommandée avant l'entraînement : attacher un prior empirique reconstruit

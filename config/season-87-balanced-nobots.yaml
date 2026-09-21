@@ -1,0 +1,156 @@
+database:
+  batch_size: 25000
+  statement_timeout_ms: 240000
+
+data:
+  # season-87-balanced without bot battles (see data/season-87-balanced-nobots/filter-manifest.json).
+  # Kept in its own tree so the two season-87 corpora never mix in one raw_dir.
+  raw_dir: data/season-87-balanced-nobots/raw
+  prepared_dir: data/season-87-balanced-nobots/prepared
+  dedup_db: data/season-87-balanced-nobots/dedup.sqlite3
+  state_file: data/season-87-balanced-nobots/extract-state.json
+  train_fraction: 0.70
+  validation_fraction: 0.15
+  require_exactly_eight_cards: true
+  allowed_modes: [ladder, ranked]
+  # Rolling history window (days before the most recent battle). The split is
+  # chronological, so with a corpus spanning years a card released last month
+  # only ever lands in validation/test and is never trained on. Trimming the
+  # oldest battles pulls the train cutoff forward so a new card (Ronin, 26000106)
+  # sits inside the train period. null = keep the whole history.
+  max_history_days: null
+  # Give every card of the static table an embedding row even when it is absent
+  # from the train split, instead of collapsing it onto the padding index 0.
+  seed_card_vocabulary: true
+  # Leave null to avoid treating raw API levels as comparable across rarities.
+  max_raw_average_level_difference: null
+  # Season 87: train one segment per 1,000 trophies. The final edge is only a
+  # sentinel above the currently reachable road.
+  trophy_buckets: [0, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 11000, 12000, 13000, 14000, 15000, 16000, 17000, 18000, 19000, 20000, 999999]
+  top_ladder_buckets: [100, 1000, 10000]
+  # No model-side pooling: each ranked league remains its own segment.
+  ranked_league_buckets: []
+  # collect-api drops ladder battles/opponents below this trophy count: we don't
+  # train on sub-5000 ladder, and queueing them only bloats the crawl frontier.
+  collect_min_trophies: 5000
+  # prepare drops segments the collector itself refuses (sub-collect_min_trophies
+  # ladder from legacy shards, unplaceable ladder:unknown) before the chronological
+  # cut. They are population the model is never asked about, so they only skew the
+  # training mix. Dropped before the cutoffs, otherwise the split stops being 70/15/15.
+  drop_out_of_scope_segments: true
+  # collect-api drops battles played more than this many days ago. The battlelog
+  # of an inactive player is mostly pre-patch games; keeping them would blend two
+  # metas in the same training corpus. 0 disables the filter.
+  collect_max_age_days: 2
+  # Fixed Season 87 floor plus the rolling freshness window above: old battlelogs
+  # cannot leak fights from before the season reset into the new corpus.
+  collect_not_before: "2026-09-07T09:00:00Z"
+  # Optional dotted callable: "my_package.my_prior:predict".
+  # It receives the parsed record and returns P(team wins) from your matrix.
+  matrix_prior_provider: null
+  # App repo used by `rigged-matchup attach-prior` to reuse the live empirical
+  # matchup classification rules instead of duplicating them in Python.
+  empirical_app_dir: ../riggedroyale
+
+model:
+  embedding_dim: 64
+  hidden_dim: 192
+  dropout: 0.15
+  max_evolution_level: 5
+  max_hero_level: 5
+  # Highest real card elixir cost; sizes the per-card elixir embedding.
+  max_elixir: 9
+  # Weight on the empirical matrix logit. 0.0 ignores the prior entirely (the
+  # network learns from cards only). To actually USE an attached matrix prior,
+  # run `attach-prior` then set matrix_prior_learnable: true (recommended) or a
+  # fixed strength > 0. With a constant 0.5 prior this has no effect.
+  matrix_prior_strength: 0.0
+  matrix_prior_learnable: false
+  use_cross_card_interactions: true
+  use_intra_deck_synergies: true
+  card_dropout: 0.05
+  use_matchup_transformer: true
+  transformer_layers: 1
+  transformer_heads: 4
+  use_segment_adapters: true
+  # Learned oriented card-vs-card interaction (A counters B) instead of a plain
+  # symmetric Hadamard product. Initialised to identity, learns from win/loss.
+  use_bilinear_cross: true
+  # Multiple oriented counter relations in parallel (anti-air / anti-swarm / ...),
+  # each an identity-init bilinear head folded back to embedding_dim. 1 = legacy.
+  cross_heads: 4
+  # Intra-deck self-attention + a learned [CLS] archetype token: captures deck
+  # style (beatdown/cycle/bait/siege) and 3+ card combos beyond pairwise synergy.
+  use_deck_transformer: true
+  deck_transformer_heads: 4
+  deck_transformer_layers: 1
+  # Learned per-card importance from the metadata: weights the deck pool and the
+  # cross-deck counter terms so a win condition (and a counter to it) outweighs a
+  # support card or defensive building. Neutral at init; needs card_metadata_dim>0.
+  use_card_importance: true
+  # Do not give every Hero deck the same global identity shift. That shortcut
+  # learned player/archetype selection bias and then leaked it into every
+  # intra-deck pair, producing a systematic negative Evo x Hero interaction.
+  # Hero forms remain fully learnable through the card-specific Hero embedding
+  # and their ability metadata. Old checkpoints that predate this option default
+  # to true when loaded, preserving their original inference behaviour.
+  use_shared_hero_features: false
+
+training:
+  seed: 42
+  # Bagging for ensemble members: draw the training row groups with replacement
+  # under this seed so members differ by the data they saw, not only by their
+  # initialisation. null trains on the whole split. Only the train loader is
+  # resampled; validation and test stay whole so members remain comparable.
+  bootstrap_seed: null
+  epochs: 15
+  batch_size: 2048
+  evaluation_batch_size: 4096
+  gradient_accumulation_steps: 1
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  num_workers: 2
+  gradient_clip_norm: 2.0
+  early_stopping_patience: 3
+  segment_calibration_min_rows: 2000
+  # Linear warmup fraction then cosine decay of the learning rate.
+  warmup_fraction: 0.05
+  # Soft targets toward 0.5. Win/loss labels are very noisy; a little smoothing
+  # reduces over-confidence and improves Brier/calibration.
+  label_smoothing: 0.02
+  device: auto
+  artifact_dir: artifacts/season-87-balanced-nobots
+  # Warm-start card embeddings from self-supervised deck co-occurrence (run
+  # `rigged-matchup pretrain-cards` after `prepare`). Rare cards start near
+  # functionally-similar ones instead of random. No labels, no card stats.
+  card2vec_init: true
+  # Inverse-frequency loss weighting so rare cards/matchups aren't drowned out by
+  # the popular meta. Weight per sample = mean rarity of its 16 cards, normalised
+  # so the average weight stays 1. power = how aggressive; cap bounds rare boosts.
+  loss_card_frequency_weighting: true
+  loss_frequency_power: 0.3
+  loss_frequency_cap: 5.0
+  # Same idea one level up: the crawl does not sample segments evenly, so without
+  # this the loss belongs to the saturated trophy band. Weights, never resampling --
+  # duplicating a battle repeats its noisy win/loss label instead of adding
+  # information. power < 1 moves only part of the way to a uniform population, cap
+  # bounds the largest/smallest weight ratio so a starved band cannot steer the model
+  # with a handful of noisy labels. Train loss only; `prepare` reports the resulting
+  # effective sample size in manifest.json under `sample_weighting`.
+  loss_segment_frequency_weighting: true
+  loss_segment_power: 0.3
+  loss_segment_cap: 3.0
+
+evaluation:
+  bad_threshold: 0.40
+  neutral_low: 0.45
+  neutral_high: 0.55
+  good_threshold: 0.60
+  calibration_bins: 15
+  # Bootstrap resamples for confidence intervals on AUC/Brier/log-loss/accuracy.
+  # Essential on small unseen-matchup splits. Set 0 to disable.
+  bootstrap_samples: 300
+  # Skip the bootstrap on any split/segment larger than this -- on millions of
+  # rows the CI is already negligible and 300x AUC resamples is the slow part of
+  # the end-of-training eval. 0 disables the guard (always bootstrap).
+  bootstrap_max_rows: 250000

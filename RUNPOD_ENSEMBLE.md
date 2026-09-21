@@ -79,7 +79,7 @@ set -o history
 test -n "$SUPABASE_URL" && test -n "$SUPABASE_SECRET_KEY"
 
 export TRAINING_BUCKET=training-battles
-export TRAINING_PREFIX=battles
+export TRAINING_PREFIX=season-87-balanced-nobots
 export STORAGE_DOWNLOAD_WORKERS=16
 
 export RUNPOD_BATCH_SIZE=8192
