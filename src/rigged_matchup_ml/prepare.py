@@ -87,14 +87,50 @@ def prepare_splits(config: AppConfig, overwrite: bool = False) -> dict[str, Any]
     raw_total = connection.execute(
         f"select count(*) from read_parquet('{raw_glob}')"
     ).fetchone()[0]
+    # The deduplicated set is written ONCE to a compressed Parquet file rather than a
+    # temp table. Uncompressed, ~70M rows spill well past what a workstation's disk
+    # can hold (DuckDB caps the spill at 90% of free space and aborts), whereas the
+    # zstd file is about the size of the raw shards. Only the rare repeated game_ids
+    # go through the window: sorting every row just to drop ~0.1% of them is what
+    # made the spill so large. NULL game_ids stay in the windowed branch, so they
+    # still collapse to one row exactly as the plain window did.
+    dedup_file = prepared_dir / "_raw_dedup.parquet"
+    dedup_path = _quoted(dedup_file)
     connection.execute(
         f"""
-        create temporary table raw_dedup as
-        select * replace ({ranked_segment_sql} as segment)
-        from read_parquet('{raw_glob}')
-        qualify row_number() over (partition by game_id order by inserted_at) = 1
+        create temporary table repeated_games as
+        select game_id from read_parquet('{raw_glob}')
+        where game_id is not null
+        group by game_id having count(*) > 1
         """
     )
+    connection.execute(
+        f"""
+        copy (
+          select * replace ({ranked_segment_sql} as segment)
+          from read_parquet('{raw_glob}')
+          where game_id is not null
+            and game_id not in (select game_id from repeated_games)
+          union all
+          select * replace ({ranked_segment_sql} as segment)
+          from read_parquet('{raw_glob}')
+          where game_id is null or game_id in (select game_id from repeated_games)
+          qualify row_number() over (partition by game_id order by inserted_at) = 1
+        ) to '{dedup_path}' (format parquet, compression zstd, row_group_size 100000)
+        """
+    )
+    # Later filters (history window, out-of-scope segments) narrow this view instead
+    # of deleting rows from a table.
+    kept_filters: list[str] = []
+
+    def _refresh_dedup_view() -> None:
+        where = " and ".join(kept_filters) if kept_filters else "true"
+        connection.execute(
+            f"create or replace temp view raw_dedup as "
+            f"select * from read_parquet('{dedup_path}') where {where}"
+        )
+
+    _refresh_dedup_view()
     dedup_total = connection.execute("select count(*) from raw_dedup").fetchone()[0]
     _log(
         f"prepare: rows raw={raw_total:,} unique={dedup_total:,} "
@@ -114,9 +150,12 @@ def prepare_splits(config: AppConfig, overwrite: bool = False) -> dict[str, Any]
             "select max(epoch(battle_time)) from raw_dedup"
         ).fetchone()[0]
         history_cutoff_epoch = float(latest) - float(max_history_days) * 86400.0
-        connection.execute(
-            f"delete from raw_dedup where epoch(battle_time) < {history_cutoff_epoch}"
+        # Same rows as `delete ... where epoch(battle_time) < cutoff`: a NULL
+        # battle_time was never deleted, so it is kept here too.
+        kept_filters.append(
+            f"not coalesce(epoch(battle_time) < {history_cutoff_epoch}, false)"
         )
+        _refresh_dedup_view()
         kept = connection.execute("select count(*) from raw_dedup").fetchone()[0]
         dropped_old = dedup_total - kept
         dedup_total = kept
@@ -149,7 +188,8 @@ def prepare_splits(config: AppConfig, overwrite: bool = False) -> dict[str, Any]
             values = ", ".join(
                 "'" + segment.replace("'", "''") + "'" for segment in out_of_scope
             )
-            connection.execute(f"delete from raw_dedup where segment in ({values})")
+            kept_filters.append(f"not coalesce(segment in ({values}), false)")
+            _refresh_dedup_view()
             dropped_out_of_scope = out_of_scope
             dedup_total -= sum(out_of_scope.values())
             _log(
@@ -359,5 +399,7 @@ def prepare_splits(config: AppConfig, overwrite: bool = False) -> dict[str, Any]
         json.dumps(manifest, indent=2), encoding="utf-8"
     )
     connection.close()
+    # The splits hold every kept row; the intermediate file only costs disk now.
+    dedup_file.unlink(missing_ok=True)
     _log("prepare: done")
     return manifest

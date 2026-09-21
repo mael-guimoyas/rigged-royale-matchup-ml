@@ -77,6 +77,36 @@ def attach_v5_a9d92a10_correction(
     return destination
 
 
+def attach_checkpoint_correction(
+    source: Path,
+    destination: Path,
+    coefficients: dict[str, float],
+    shrinkage: float = 0.75,
+    fit: dict[str, Any] | None = None,
+) -> Path:
+    """Embed a freshly fitted correction, recording the checkpoint it was fitted on."""
+    if not 0.0 <= shrinkage <= 1.0:
+        raise ValueError("Hero/Evo correction shrinkage must be between 0 and 1")
+    source = source.resolve()
+    destination = destination.resolve()
+    if source == destination:
+        raise ValueError("Source and destination checkpoints must be different")
+    payload = torch.load(source, map_location="cpu", weights_only=False)
+    payload[CORRECTION_KEY] = {
+        "schema_version": 1,
+        "application": "post_calibration_antisymmetric_logit",
+        "source_checkpoint_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+        "shrinkage": float(shrinkage),
+        "coefficients_by_hero_card_id": {
+            str(card_id): float(value) for card_id, value in coefficients.items()
+        },
+        "fit": dict(fit) if fit else {},
+    }
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(payload, destination)
+    return destination
+
+
 def correction_profile(bundle: dict[str, Any]) -> tuple[float, dict[str, float]] | None:
     """Validate and normalize an optional correction embedded in a checkpoint."""
     raw = bundle.get(CORRECTION_KEY)

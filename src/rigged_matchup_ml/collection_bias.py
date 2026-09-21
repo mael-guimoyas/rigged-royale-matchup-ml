@@ -127,12 +127,20 @@ def collection_bias_report(
         connection.execute(
             f"create or replace temp view battles as select * from read_parquet('{raw_glob}')"
         )
+        # Distinct counts go through a GROUP BY subquery rather than count(distinct):
+        # DuckDB's hash aggregate spills to disk, its distinct aggregate does not, and
+        # on a ~70M-row corpus the latter needs the whole key set in RAM at once.
         row_count, distinct_games, wins, missing_time, first_battle, last_battle = (
             connection.execute(
                 """
                 select
                     count(*) as row_count,
-                    count(distinct game_id) as distinct_games,
+                    (
+                        select count(*) from (
+                            select game_id from battles
+                            where game_id is not null group by game_id
+                        )
+                    ) as distinct_games,
                     sum(case when win then 1 else 0 end) as wins,
                     count(*) filter (where battle_time is null) as missing_time,
                     min(battle_time) as first_battle,
@@ -190,7 +198,16 @@ def collection_bias_report(
             """
         )
         deck_slots, distinct_decks = connection.execute(
-            "select count(*), count(distinct deck_key) from deck_slots"
+            """
+            select
+                (select count(*) from deck_slots),
+                (
+                    select count(*) from (
+                        select deck_key from deck_slots
+                        where deck_key is not null group by deck_key
+                    )
+                )
+            """
         ).fetchone()
         top_decks = connection.execute(
             f"""
@@ -204,7 +221,12 @@ def collection_bias_report(
         distinct_matchups, mirror_share = connection.execute(
             f"""
             select
-                count(distinct {_MATCHUP_KEY_SQL}),
+                (
+                    select count(*) from (
+                        select {_MATCHUP_KEY_SQL} as matchup_key from battles
+                        group by matchup_key having matchup_key is not null
+                    )
+                ),
                 avg(case when team_deck_key = opponent_deck_key then 1.0 else 0.0 end)
             from battles
             """

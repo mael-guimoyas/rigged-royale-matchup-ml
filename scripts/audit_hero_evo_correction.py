@@ -13,6 +13,7 @@ import duckdb
 import numpy as np
 from sklearn.metrics import roc_auc_score
 
+from rigged_matchup_ml.config import load_config
 from rigged_matchup_ml.domain import ROLE_HERO, ROLE_NORMAL
 from rigged_matchup_ml.hero_evo_correction import V5_A9D92A10_HERO_COEFFICIENTS
 from rigged_matchup_ml.predictor import load_bundle, predict_from_rows
@@ -22,12 +23,19 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("source", type=Path, help="Uncorrected checkpoint")
     parser.add_argument("corrected", type=Path, help="Checkpoint with embedded correction")
-    parser.add_argument("--raw-dir", type=Path, default=Path("data/raw"))
+    parser.add_argument("--config", type=Path, default=Path("config/default.yaml"))
+    # Defaults to data.raw_dir from the config, so the fit follows the corpus the
+    # rest of the pipeline uses instead of a stale hard-coded directory.
+    parser.add_argument("--raw-dir", type=Path, default=None)
     parser.add_argument("--contexts-per-hero", type=int, default=100)
     parser.add_argument("--factual-rows", type=int, default=50_000)
     parser.add_argument("--batch-size", type=int, default=4096)
     parser.add_argument("--device", default=None)
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.raw_dir is None:
+        config = load_config(args.config)
+        args.raw_dir = config.resolve(config.data["raw_dir"])
+    return args
 
 
 def real_hero_contexts(raw_dir: Path, per_hero: int) -> list[dict[str, Any]]:

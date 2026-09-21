@@ -851,8 +851,19 @@ class StorageClient:
             headers=self._headers(),
         )
         with urllib.request.urlopen(request, timeout=300) as response:
+            expected = response.headers.get("Content-Length")
             with destination.open("wb") as handle:
                 shutil.copyfileobj(response, handle)
+        # A reset mid-stream can end copyfileobj without raising, which would
+        # otherwise promote a truncated shard into the corpus as a valid file.
+        if expected is not None:
+            written = destination.stat().st_size
+            if written != int(expected):
+                destination.unlink(missing_ok=True)
+                raise OSError(
+                    f"Truncated download for {object_name}: "
+                    f"expected {expected} bytes, got {written}"
+                )
 
 
 def download_from_storage(
