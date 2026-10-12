@@ -5,7 +5,7 @@ import pytest
 from rigged_matchup_ml.collector_cli import _build_parser, main
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-COLLECT_SCRIPT = REPO_ROOT / "scripts" / "collect_season87.sh"
+COLLECT_SCRIPT = REPO_ROOT / "scripts" / "collect_season88.sh"
 
 
 def test_collector_cli_has_safe_netcup_defaults() -> None:
@@ -13,7 +13,7 @@ def test_collector_cli_has_safe_netcup_defaults() -> None:
 
     assert args.collector_id == "netcup"
     assert args.max_duration_hours == 6.0
-    assert args.prefix == "season-87"
+    assert args.prefix == "season-88"
     assert args.upload is False
 
 
@@ -78,5 +78,7 @@ def test_netcup_script_passes_the_steering_flags() -> None:
 
     assert "--deficit-bias" in script
     assert "--min-queue-depth" in script
-    assert 'deficit_bias="${COLLECTOR_DEFICIT_BIAS:-0.5}"' in script
+    assert 'deficit_bias="${COLLECTOR_DEFICIT_BIAS:-0}"' in script
+    assert "--max-queue-per-band" in script
+    assert "seeds_season88.txt" in script
     assert 'min_queue_depth="${COLLECTOR_MIN_QUEUE_DEPTH:-500}"' in script

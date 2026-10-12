@@ -627,3 +627,30 @@ def test_balance_report_pairs_corpus_share_with_run_share() -> None:
 
 def test_balance_report_is_empty_before_anything_is_collected() -> None:
     assert _balance_report(Counter(), Counter()) == ""
+
+
+def test_frontier_per_band_cap_keeps_room_for_other_bands() -> None:
+    # Season 87 filled the global queue with ladder:14000 tags and then refused
+    # every candidate. A full band must now skip only its own candidates.
+    frontier = BalancedFrontier(
+        seeds=[],
+        buckets=BUCKETS,
+        min_trophies=5000,
+        baseline_counts=Counter(),
+        max_queued=100,
+        max_per_band=2,
+    )
+    frontier.add(
+        [
+            ("#TOP1", "ladder", 14500),
+            ("#TOP2", "ladder", 14600),
+            ("#TOP3", "ladder", 14700),  # band full -> skipped, not a break
+            ("#LOW1", "ladder", 6000),
+        ]
+    )
+    assert frontier.queue_size() == 3
+    drawn = {frontier.next_tag() for _ in range(3)}
+    assert drawn == {"#TOP1", "#TOP2", "#LOW1"}
+    # The skipped tag was never marked queued, so it can come back later.
+    frontier.add([("#TOP3", "ladder", 14700)])
+    assert frontier.next_tag() == "#TOP3"

@@ -10,7 +10,7 @@ $ErrorActionPreference = "Stop"
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $python = Join-Path $repoRoot ".venv\Scripts\python.exe"
 $config = Join-Path $repoRoot "config\default.yaml"
-$seeds = Join-Path $repoRoot "seeds_balanced.txt"
+$seeds = Join-Path $repoRoot "seeds_season88.txt"
 $logDir = Join-Path $repoRoot "logs\season-87"
 
 if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
@@ -36,7 +36,7 @@ $collectorArgs = @(
     "--api-token-mode", "1",
     "--upload",
     "--bucket", "training-battles",
-    "--prefix", "season-87",
+    "--prefix", "season-88",
     "--no-progress",
     "--stats-interval", "60"
 )

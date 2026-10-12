@@ -1,5 +1,5 @@
 [Unit]
-Description=Rigged Royale Season 87 battle collector
+Description=Rigged Royale Season 88 battle collector
 Wants=network-online.target
 After=network-online.target
 StartLimitIntervalSec=300
@@ -13,12 +13,12 @@ Environment=PYTHONUNBUFFERED=1
 Environment=COLLECTOR_ID=netcup
 Environment=COLLECTOR_CYCLE_HOURS=6
 Environment=COLLECTOR_RPS=30
-# Top-up steering for the starved sub-14000 bands. Surfaced here so it can be
-# turned off with `systemctl edit` once they are deep enough, without touching
-# the repo; see scripts/collect_season87.sh for what it trades away.
-Environment=COLLECTOR_DEFICIT_BIAS=0.5
+# Band balance now comes from the per-band queue cap and the balanced seeds.
+# The deficit steering stays off; raise it with `systemctl edit` only if a band
+# still lags after a few cycles -- see scripts/collect_season88.sh.
+Environment=COLLECTOR_DEFICIT_BIAS=0
 Environment=COLLECTOR_MIN_QUEUE_DEPTH=500
-ExecStart=/bin/bash __REPO_ROOT__/scripts/collect_season87.sh
+ExecStart=/bin/bash __REPO_ROOT__/scripts/collect_season88.sh
 Restart=always
 RestartSec=20
 KillSignal=SIGINT

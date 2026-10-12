@@ -322,6 +322,9 @@ HERO_ABILITY: dict[int, tuple[int, tuple[str, ...]]] = {
     # Savage Survival buffs speed/damage and prevents Berserker dropping below
     # 1 HP for its duration (the game's "Unkillable" state).
     26000102: (3, ("ability_buff", "ability_shield")),
+    # Season 88: Surging Strikes (2 elixir) -- twin beams that keep up to two
+    # nearby enemies stunned, 5 hits over 3.25 s.
+    26000042: (2, ("ability_damage", "ability_control")),  # Hero Electro Wizard
 }
 
 # Evolution effects, keyed by base card id; apply only when fielded evolved
@@ -357,6 +360,10 @@ EVO_EFFECT: dict[int, tuple[int, tuple[str, ...]]] = {
     26000064: (2, ("evo_splash", "evo_damage")),     # Evo Firecracker - lingering AoE field
     27000002: (3, ("evo_spawn", "evo_damage")),      # Evo Mortar - spawns Goblins on hit
     27000010: (2, ("evo_spawn",)),                   # Evo Furnace - spawns Fire Spirit each attack
+    # Season 88: Level Damper -- every 6 s a 6-tile pulse removes one level from
+    # nearby enemies (crown towers excluded), ~-9% HP and damage. No damage of
+    # its own. Cycle count not published yet: 2 is a placeholder -- verify.
+    26000085: (2, ("evo_control",)),                 # Evo Electro Giant - Level Damper
     28000004: (2, ("evo_spawn",)),                   # Evo Goblin Barrel - spawns two barrels
     28000008: (2, ("evo_buff", "evo_damage")),       # Evo Zap - double zap (buff/damage)
 }

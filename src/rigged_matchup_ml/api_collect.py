@@ -484,6 +484,17 @@ class BalancedFrontier:
     deficit blend may pick it keeps every steered draw a real random sample;
     below that threshold the band is skipped and the proportional draw applies.
 
+    `max_per_band` caps each band's queue on its own. The global `max_queued`
+    alone let the most active band take the whole queue: season 87 hit the
+    100,000 cap within an hour, after which `add` refused every candidate of
+    every band, so the queue froze on its top-heavy mix and the proportional
+    draw kept serving ladder:14000-14999 (51% of the corpus). With a per-band
+    cap a saturated band stops growing while the others keep filling, and once
+    several bands sit at the cap the draw between them is even. The draw inside
+    a band stays uniform over a deep queue, so this is stratified sampling with
+    a flatter allocation, not the old starvation steering. Ranked leagues are
+    separate bands here, so each one gets its own cap.
+
     Seed players are excluded from the corpus by default (`min_hop`): they come
     from a tags file or from `public.players`, i.e. the site's own visitors, who
     are self-selected. Their opponents are not -- those are drawn by the game's
@@ -501,10 +512,12 @@ class BalancedFrontier:
         deficit_bias: float = 0.0,
         min_queue_depth: int = 0,
         rng: random.Random | None = None,
+        max_per_band: int | None = None,
     ) -> None:
         self._buckets = buckets
         self._min_trophies = min_trophies
         self._max_queued = max_queued
+        self._max_per_band = max_per_band if max_per_band and max_per_band > 0 else None
         self._deficit_bias = max(0.0, min(1.0, deficit_bias))
         self._min_queue_depth = max(0, min_queue_depth)
         self._rng = rng or random.Random()
@@ -567,9 +580,14 @@ class BalancedFrontier:
             if bucket is None:
                 skipped += 1
                 continue
+            queue = self._queues.setdefault(bucket, [])
+            # Not a break: a full band must not stop the next candidate, which
+            # may belong to a band that still has room.
+            if self._max_per_band is not None and len(queue) >= self._max_per_band:
+                continue
             self._queued.add(tag)
             self._hops[tag] = hop
-            self._queues.setdefault(bucket, []).append(tag)
+            queue.append(tag)
             active_queued += 1
         return skipped
 
@@ -1100,6 +1118,7 @@ def collect_from_api(
     balance: bool = True,
     deficit_bias: float = 0.0,
     min_queue_depth: int = 0,
+    max_queue_per_band: int | None = None,
     min_hop: int = 1,
     api_token_mode: str = "1",
     show_progress: bool = True,
@@ -1181,6 +1200,16 @@ def collect_from_api(
         max_queued = max_queue
     else:
         max_queued = max_players * 4 if max_players is not None else DEFAULT_MAX_QUEUE
+    # Default per-band cap: an even share of the global queue across the bands
+    # the crawl tracks (ladder bands from min_trophies up, plus ranked). 0 or a
+    # negative value turns the per-band cap off.
+    if max_queue_per_band is None:
+        tracked_bands = 1 + sum(
+            1 for lower in trophy_buckets[:-1] if lower >= min_trophies
+        )
+        max_per_band = max_queued // tracked_bands if max_queued else None
+    else:
+        max_per_band = max_queue_per_band if max_queue_per_band > 0 else None
     # `--balance` is the legacy switch for the starvation ordering; it now only
     # decides whether the deficit blend gets a baseline to work from, and the
     # blend itself is off unless deficit_bias is raised.
@@ -1192,6 +1221,7 @@ def collect_from_api(
         max_queued,
         deficit_bias=deficit_bias if balance else 0.0,
         min_queue_depth=min_queue_depth,
+        max_per_band=max_per_band,
     )
 
     buffer: list[dict[str, Any]] = []
@@ -1229,6 +1259,7 @@ def collect_from_api(
         "progress": show_progress,
         "stats_interval_seconds": stats_interval_seconds,
         "max_queue": max_queued,
+        "max_queue_per_band": max_per_band,
     }
     run_by_segment: Counter[str] = Counter()
     # Wins of the *fetched* side per band. Every battle enters the corpus from

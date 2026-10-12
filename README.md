@@ -136,20 +136,40 @@ rigged-matchup collect-api --from-supabase 500 --upload --max-battles 200000
 rigged-matchup collect-api --tags-file tags.txt --max-players 50
 ```
 
-Pour la saison 87, la configuration par défaut isole les nouveaux shards sous
-`data/season-87/raw`, découpe le ladder par tranches de 1 000 trophées et conserve
-chaque ligue ranked séparément. Les shards d'août dans `data/raw` ne sont ni lus ni
-supprimés. Le collecteur sait aussi terminer proprement un run chronométré :
+Pour la saison 88 (début retenu : lundi 5 octobre 2026, 09:00 UTC), la configuration
+par défaut isole les nouveaux shards sous `data/season-88/raw`, découpe le ladder par
+tranches de 1 000 trophées et conserve chaque ligue ranked séparément. La configuration
+de collecte de la saison 87 reste disponible dans `config/season-87.yaml`. Le collecteur
+sait aussi terminer proprement un run chronométré :
 
 ```powershell
-rigged-matchup collect-api --tags-file seeds_balanced.txt --max-duration-hours 10 --upload --prefix season-87 --no-progress
+rigged-matchup collect-api --tags-file seeds_season88.txt --max-duration-hours 10 --upload --prefix season-88 --no-progress
 ```
 
-Sous Windows, `scripts/register_season87_collection.ps1` lance immédiatement le
+Sous Windows, `scripts/register_season88_collection.ps1` lance immédiatement le
 premier run puis programme les six suivants, soit 10 h/jour pendant 7 jours. Chaque
-run écrit son journal dans `logs/season-87/`. La borne `data.collect_not_before`
+run écrit son journal dans `logs/season-88/`. La borne `data.collect_not_before`
 rejette les combats antérieurs au démarrage de la saison encore présents dans les
 battlelogs.
+
+**Répartition par tranche.** La saison 87 a fini à 51 % dans `ladder:14000-14999`.
+La file snowball, plafonnée globalement à 100 000 tags, était pleine au bout d'une
+heure, surtout de joueurs à 14 000 (les plus actifs). Ensuite elle refusait tout
+nouveau candidat, quelle que soit sa tranche. La file est maintenant aussi plafonnée
+**par tranche** (`--max-queue-per-band`, par défaut le plafond global divisé par le
+nombre de tranches suivies). Une tranche saturée arrête de grossir pendant que les
+autres continuent de se remplir. Les seeds viennent de
+`scripts/build_seeds_from_supabase.py`, qui tire le même nombre de tags par tranche
+de 1 000 trophées parmi les joueurs vus dans `public.battles` et `public.players`
+(les shards locaux ne contiennent pas les tags) :
+
+```bash
+python scripts/build_seeds_from_supabase.py --per-band 1500 --since-days 60 --out seeds_season88.txt
+```
+
+Le `seeds_season88.txt` livré contient 15 577 tags : 1 500 par tranche de 7 000 à
+14 999 et en ranked, mais 526 à 5 000, 1 464 à 6 000 et 87 à 15 000+, faute de
+joueurs connus dans ces tranches.
 
 #### Collecte 24/7 sur Netcup
 
@@ -168,13 +188,24 @@ sudo systemctl status rigged-royale-collector.service
 sudo journalctl -u rigged-royale-collector.service -f
 ```
 
+Pour une mise à jour (par exemple le passage à la saison 88), relance l'installateur
+après le pull : il réinstalle l'unit et **redémarre** le service, qui écrit son shard
+partiel avant de s'arrêter. Le premier cycle doit afficher `max_queue_per_band` et
+`deficit_bias: 0` dans son résumé, et des lignes `BALANCE` en `5000`, `6000`, etc.
+
+```bash
+git pull
+bash scripts/install_netcup_collector.sh
+sudo journalctl -u rigged-royale-collector.service -f
+```
+
 Les fichiers Netcup sont nommés `api-netcup-part-*.parquet`. Ils peuvent donc être
-uploadés sous le même préfixe Storage `season-87` que les shards Windows sans les
+uploadés sous le même préfixe Storage `season-88` que les shards Windows sans les
 écraser. Une fois un premier shard Netcup visible dans Storage, la tâche Windows peut
 être désactivée localement :
 
 ```powershell
-Disable-ScheduledTask -TaskName "RiggedRoyale-Season87-Collect"
+Disable-ScheduledTask -TaskName "RiggedRoyale-Season88-Collect"
 ```
 
 **Fraîcheur des combats.** Par défaut, seuls les combats des **2 derniers jours** sont

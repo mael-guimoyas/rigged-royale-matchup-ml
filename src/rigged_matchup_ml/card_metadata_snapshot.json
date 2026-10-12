@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "generated_at": "2026-09-07T16:25:51+00:00",
+  "generated_at": "2026-10-12T04:38:15+00:00",
   "source": {
     "method": "hand-curated taxonomy (offline, no scraping)",
     "generator": "scripts/refresh_card_metadata.py::CARD_TABLE"
@@ -1675,6 +1675,13 @@
         "dps": 0.4,
         "speed": 0.5,
         "range": 0.6
+      },
+      "hero_ability": {
+        "cost": 2,
+        "tags": [
+          "ability_damage",
+          "ability_control"
+        ]
       }
     },
     "26000043": {
@@ -3168,6 +3175,12 @@
         "dps": 0.4,
         "speed": 0.25,
         "range": 0.6
+      },
+      "evo": {
+        "cycle": 2,
+        "tags": [
+          "evo_control"
+        ]
       }
     },
     "26000086": {

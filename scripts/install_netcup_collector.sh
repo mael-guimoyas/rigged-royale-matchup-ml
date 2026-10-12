@@ -23,8 +23,8 @@ if [[ ! -f "${env_file}" ]]; then
   echo "Missing ${env_file}. Copy .env.example to .env and fill the secrets first." >&2
   exit 1
 fi
-if [[ ! -f "${repo_root}/seeds_balanced.txt" ]]; then
-  echo "Missing ${repo_root}/seeds_balanced.txt." >&2
+if [[ ! -f "${repo_root}/seeds_season88.txt" ]]; then
+  echo "Missing ${repo_root}/seeds_season88.txt." >&2
   exit 1
 fi
 
@@ -50,7 +50,7 @@ python3 -m venv "${repo_root}/.venv-collector"
   "tqdm>=4.66"
 "${repo_root}/.venv-collector/bin/python" -m pip install --no-deps --editable "${repo_root}"
 
-mkdir -p "${repo_root}/data/season-87/raw" "${repo_root}/logs"
+mkdir -p "${repo_root}/data/season-88/raw" "${repo_root}/logs"
 if [[ "$(id -u)" -eq 0 ]]; then
   chown -R "${run_user}:$(id -gn "${run_user}")" \
     "${repo_root}/.venv-collector" \
@@ -72,7 +72,11 @@ else
 fi
 "${admin[@]}" install -m 0644 "${unit_tmp}" "/etc/systemd/system/${unit_name}"
 "${admin[@]}" systemctl daemon-reload
-"${admin[@]}" systemctl enable --now "${unit_name}"
+"${admin[@]}" systemctl enable "${unit_name}"
+# restart, not `enable --now`: on an update the old process would otherwise keep
+# running the previous code (and the previous unit's environment) until its
+# cycle ends. SIGINT lets it flush its partial shard first.
+"${admin[@]}" systemctl restart "${unit_name}"
 
 echo "Collector installed and started."
 echo "Status: sudo systemctl status ${unit_name}"

@@ -90,6 +90,13 @@ def collect_api(
         help="Cap active snowball frontier tags waiting to be fetched "
         "(default 100000; 0 means unlimited).",
     ),
+    max_queue_per_band: int | None = typer.Option(
+        None,
+        "--max-queue-per-band",
+        help="Cap queued tags per trophy band so the most active band cannot fill "
+        "the whole frontier (default: --max-queue split evenly across tracked "
+        "bands; 0 disables).",
+    ),
     min_trophies: int | None = typer.Option(
         None,
         help="Drop ladder battles/opponents below this trophy count (default from "
@@ -179,6 +186,7 @@ def collect_api(
         prefix=prefix,
         collector_id=collector_id,
         max_queue=max_queue,
+        max_queue_per_band=max_queue_per_band,
         min_trophies=min_trophies,
         max_age_days=max_age_days,
         not_before=not_before,

@@ -24,10 +24,14 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--api-token-mode", choices=("1", "2", "both"), default="1")
     parser.add_argument("--upload", action="store_true")
     parser.add_argument("--bucket", default="training-battles")
-    parser.add_argument("--prefix", default="season-87")
+    parser.add_argument("--prefix", default="season-88")
     parser.add_argument("--collector-id", default="netcup")
     parser.add_argument("--stats-interval", type=float, default=60.0)
     parser.add_argument("--max-queue", type=int)
+    # Per-band share of that queue. Without it the most active band filled the
+    # whole 100,000-tag frontier within an hour of season 87 and froze it there.
+    # Default: --max-queue split evenly across the tracked bands; 0 disables.
+    parser.add_argument("--max-queue-per-band", type=int)
     parser.add_argument("--min-trophies", type=int)
     parser.add_argument("--max-age-days", type=float)
     parser.add_argument("--not-before")
@@ -85,6 +89,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         prefix=args.prefix,
         collector_id=args.collector_id,
         max_queue=args.max_queue,
+        max_queue_per_band=args.max_queue_per_band,
         min_trophies=args.min_trophies,
         max_age_days=args.max_age_days,
         not_before=args.not_before,

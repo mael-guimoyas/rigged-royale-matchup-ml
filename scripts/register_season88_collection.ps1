@@ -6,13 +6,13 @@ param(
     [ValidateRange(2, 31)]
     [int]$Days = 7,
 
-    [string]$TaskName = "RiggedRoyale-Season87-Collect"
+    [string]$TaskName = "RiggedRoyale-Season88-Collect"
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$runner = Join-Path $PSScriptRoot "collect_season87.ps1"
+$runner = Join-Path $PSScriptRoot "collect_season88.ps1"
 $firstScheduledStart = (Get-Date).AddDays(1)
 $lastScheduledStart = $firstScheduledStart.AddDays($Days - 2)
 $endBoundary = $lastScheduledStart.AddHours(1)
@@ -48,7 +48,7 @@ $task = New-ScheduledTask `
     -Trigger $trigger `
     -Principal $principal `
     -Settings $settings `
-    -Description "Season 87 battle collection: 10 hours per day, isolated shards and Storage prefix."
+    -Description "Season 88 battle collection: 10 hours per day, isolated shards and Storage prefix."
 
 Register-ScheduledTask -TaskName $TaskName -InputObject $task -Force | Out-Null
 Start-ScheduledTask -TaskName $TaskName
