@@ -1,5 +1,5 @@
 [Unit]
-Description=Rigged Royale Season 88 battle collector
+Description=Rigged Royale Season 89 battle collector
 Wants=network-online.target
 After=network-online.target
 StartLimitIntervalSec=300
@@ -15,10 +15,10 @@ Environment=COLLECTOR_CYCLE_HOURS=6
 Environment=COLLECTOR_RPS=30
 # Band balance now comes from the per-band queue cap and the balanced seeds.
 # The deficit steering stays off; raise it with `systemctl edit` only if a band
-# still lags after a few cycles -- see scripts/collect_season88.sh.
+# still lags after a few cycles -- see scripts/collect_season89.sh.
 Environment=COLLECTOR_DEFICIT_BIAS=0
 Environment=COLLECTOR_MIN_QUEUE_DEPTH=500
-ExecStart=/bin/bash __REPO_ROOT__/scripts/collect_season88.sh
+ExecStart=/bin/bash __REPO_ROOT__/scripts/collect_season89.sh
 Restart=always
 RestartSec=20
 KillSignal=SIGINT

@@ -136,21 +136,32 @@ rigged-matchup collect-api --from-supabase 500 --upload --max-battles 200000
 rigged-matchup collect-api --tags-file tags.txt --max-players 50
 ```
 
-Pour la saison 88 (début retenu : lundi 5 octobre 2026, 09:00 UTC), la configuration
-par défaut isole les nouveaux shards sous `data/season-88/raw`, découpe le ladder par
-tranches de 1 000 trophées et conserve chaque ligue ranked séparément. La configuration
-de collecte de la saison 87 reste disponible dans `config/season-87.yaml`. Le collecteur
-sait aussi terminer proprement un run chronométré :
+Pour la saison 89 (Evo Géant et Evo Miroir ; début retenu : lundi 2 novembre 2026,
+09:00 UTC), la configuration par défaut isole les nouveaux shards sous
+`data/season-89/raw`, découpe le ladder par tranches de 1 000 trophées et conserve
+chaque ligue ranked séparément. Les configurations de collecte des saisons 87 et 88
+restent disponibles dans `config/season-87.yaml` et `config/season-88.yaml`. Le
+collecteur sait aussi terminer proprement un run chronométré :
 
 ```powershell
-rigged-matchup collect-api --tags-file seeds_season88.txt --max-duration-hours 10 --upload --prefix season-88 --no-progress
+rigged-matchup collect-api --tags-file seeds_season88.txt --max-duration-hours 10 --upload --prefix season-89 --no-progress
 ```
 
-Sous Windows, `scripts/register_season88_collection.ps1` lance immédiatement le
+Sous Windows, `scripts/register_season89_collection.ps1` lance immédiatement le
 premier run puis programme les six suivants, soit 10 h/jour pendant 7 jours. Chaque
-run écrit son journal dans `logs/season-88/`. La borne `data.collect_not_before`
+run écrit son journal dans `logs/season-89/`. La borne `data.collect_not_before`
 rejette les combats antérieurs au démarrage de la saison encore présents dans les
-battlelogs.
+battlelogs. Les seeds de la saison 88 sont réutilisés tels quels.
+
+**Changement de saison : penser au préfixe Storage.** Au début de la saison 89, le
+collecteur Netcup tournait encore avec l'unit de la saison 88 et a envoyé ses
+shards de novembre sous `season-88/`. Les shards `api-netcup-part-000939` à
+`001901` (47 946 612 combats, du 7 au 12 novembre, patch `2026-11`) ont été
+déplacés vers `season-89/` le 13 novembre 2026 ; `season-88/` ne garde que les
+shards `000000` à `000938` (12 au 14 octobre). Le collecteur reprend la numérotation
+après le plus grand index trouvé localement ou dans Storage, donc le prochain shard
+de saison 89 sera `001902`. `scripts/collect_season88.sh` relaie maintenant vers le
+script de la saison 89 pour une unit pas encore réinstallée.
 
 **Répartition par tranche.** La saison 87 a fini à 51 % dans `ladder:14000-14999`.
 La file snowball, plafonnée globalement à 100 000 tags, était pleine au bout d'une
@@ -188,7 +199,7 @@ sudo systemctl status rigged-royale-collector.service
 sudo journalctl -u rigged-royale-collector.service -f
 ```
 
-Pour une mise à jour (par exemple le passage à la saison 88), relance l'installateur
+Pour une mise à jour (par exemple le passage à la saison 89), relance l'installateur
 après le pull : il réinstalle l'unit et **redémarre** le service, qui écrit son shard
 partiel avant de s'arrêter. Le premier cycle doit afficher `max_queue_per_band` et
 `deficit_bias: 0` dans son résumé, et des lignes `BALANCE` en `5000`, `6000`, etc.
@@ -200,12 +211,12 @@ sudo journalctl -u rigged-royale-collector.service -f
 ```
 
 Les fichiers Netcup sont nommés `api-netcup-part-*.parquet`. Ils peuvent donc être
-uploadés sous le même préfixe Storage `season-88` que les shards Windows sans les
+uploadés sous le même préfixe Storage `season-89` que les shards Windows sans les
 écraser. Une fois un premier shard Netcup visible dans Storage, la tâche Windows peut
 être désactivée localement :
 
 ```powershell
-Disable-ScheduledTask -TaskName "RiggedRoyale-Season88-Collect"
+Disable-ScheduledTask -TaskName "RiggedRoyale-Season89-Collect"
 ```
 
 **Fraîcheur des combats.** Par défaut, seuls les combats des **2 derniers jours** sont
@@ -429,6 +440,26 @@ est un bot, et tout combat où un des deux côtés la joue est retiré.
 python scripts/filter_bot_battles.py data/season-87-balanced/raw data/season-87-balanced-nobots --memory-limit 2GB --threads 2
 rigged-matchup upload-storage --config config/season-87-balanced-nobots.yaml --prefix season-87-balanced-nobots
 ```
+
+Saison 89, même règle :
+
+```bash
+rigged-matchup pull-storage --prefix season-89
+python scripts/filter_bot_battles.py data/season-89/raw data/season-89-nobots --memory-limit 9GB --threads 4
+rigged-matchup upload-storage --config config/season-89-nobots.yaml --prefix season-89-nobots
+rigged-matchup prepare --config config/season-89-nobots.yaml
+```
+
+Résultat au 13 novembre 2026 : 2 563 configurations retirées, 34 413 153 combats
+gardés sur 47 946 612 (−28,2 %), 86 shards sous `season-89-nobots/`. Le retrait est
+plus fort qu'en saison 87, surtout dans `ladder:14000-14999` (−60 %) et
+`ladder:5000-6999` (−54 %), contre −3 à −9 % en ranked. Les combats où le joueur
+collecté aligne l'Evo Géant ou l'Evo Miroir sont gardés à 87,5 %. `prepare` ne trouve
+aucun doublon, n'émet aucune alerte (`win_rate_shift` +0,25 pt, taille d'échantillon
+effective 97 %) et découpe 24 089 344 / 5 161 880 / 5 161 929 combats.
+
+Le script choisit la syntaxe lambda selon la version de DuckDB : `lambda c, i:` à
+partir de 1.3, l'ancienne flèche `->` avant (DuckDB 2.0 la refuse).
 
 `filter-manifest.json` donne la règle et la part retirée par segment ; `bot_loadouts.parquet`
 les configurations retirées. Mesuré en A/B sur 5 % de season-87 : sans les bots, les decks

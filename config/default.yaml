@@ -3,11 +3,11 @@ database:
   statement_timeout_ms: 240000
 
 data:
-  # Season 88 is isolated; Season 87 stays readable through config/season-87.yaml.
-  raw_dir: data/season-88/raw
-  prepared_dir: data/season-88/prepared
-  dedup_db: data/season-88/dedup.sqlite3
-  state_file: data/season-88/extract-state.json
+  # Season 89 is isolated; Season 88 stays readable through config/season-88.yaml.
+  raw_dir: data/season-89/raw
+  prepared_dir: data/season-89/prepared
+  dedup_db: data/season-89/dedup.sqlite3
+  state_file: data/season-89/extract-state.json
   train_fraction: 0.70
   validation_fraction: 0.15
   require_exactly_eight_cards: true
@@ -41,9 +41,9 @@ data:
   # of an inactive player is mostly pre-patch games; keeping them would blend two
   # metas in the same training corpus. 0 disables the filter.
   collect_max_age_days: 2
-  # Fixed Season 88 floor (first Monday of October, 09:00 UTC) plus the rolling freshness window above: old battlelogs
+  # Fixed Season 89 floor (first Monday of November, 09:00 UTC) plus the rolling freshness window above: old battlelogs
   # cannot leak fights from before the season reset into the new corpus.
-  collect_not_before: "2026-10-05T09:00:00Z"
+  collect_not_before: "2026-11-02T09:00:00Z"
   # Optional dotted callable: "my_package.my_prior:predict".
   # It receives the parsed record and returns P(team wins) from your matrix.
   matrix_prior_provider: null

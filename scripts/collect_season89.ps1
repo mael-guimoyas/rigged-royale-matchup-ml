@@ -11,7 +11,7 @@ $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $python = Join-Path $repoRoot ".venv\Scripts\python.exe"
 $config = Join-Path $repoRoot "config\default.yaml"
 $seeds = Join-Path $repoRoot "seeds_season88.txt"
-$logDir = Join-Path $repoRoot "logs\season-87"
+$logDir = Join-Path $repoRoot "logs\season-89"
 
 if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
     throw "Python environment not found: $python"
@@ -36,7 +36,7 @@ $collectorArgs = @(
     "--api-token-mode", "1",
     "--upload",
     "--bucket", "training-battles",
-    "--prefix", "season-88",
+    "--prefix", "season-89",
     "--no-progress",
     "--stats-interval", "60"
 )

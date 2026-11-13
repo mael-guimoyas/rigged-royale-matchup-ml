@@ -50,7 +50,7 @@ python3 -m venv "${repo_root}/.venv-collector"
   "tqdm>=4.66"
 "${repo_root}/.venv-collector/bin/python" -m pip install --no-deps --editable "${repo_root}"
 
-mkdir -p "${repo_root}/data/season-88/raw" "${repo_root}/logs"
+mkdir -p "${repo_root}/data/season-89/raw" "${repo_root}/logs"
 if [[ "$(id -u)" -eq 0 ]]; then
   chown -R "${run_user}:$(id -gn "${run_user}")" \
     "${repo_root}/.venv-collector" \

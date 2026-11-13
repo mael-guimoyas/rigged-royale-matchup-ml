@@ -39,9 +39,19 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def loadout(side: str) -> str:
+def lambda_head(connection: duckdb.DuckDBPyConnection) -> str:
+    """DuckDB 1.3+ spells a lambda `lambda c, i: ...` and newer releases reject the
+    old `(c, i) -> ...` arrow; versions before 1.3 only know the arrow."""
+    try:
+        connection.execute("select list_transform([1], lambda c, i: c + i)")
+        return "lambda c, i:"
+    except duckdb.Error:
+        return "(c, i) ->"
+
+
+def loadout(side: str, head: str) -> str:
     return (
-        f"hash(list_sort(list_transform({side}_card_ids, (c, i) -> c * 100 + "
+        f"hash(list_sort(list_transform({side}_card_ids, {head} c * 100 + "
         f"{side}_evolution_levels[i] * 10 + {side}_hero_levels[i])), "
         f"coalesce({side}_tower_troop_id, 0))"
     )
@@ -61,15 +71,16 @@ def main() -> None:
         connection.execute(f"set memory_limit='{args.memory_limit}'")
     if args.threads:
         connection.execute(f"set threads={int(args.threads)}")
+    head = lambda_head(connection)
 
     # Hashed keys keep the GROUP BY spillable on a workstation; string keys do not.
     connection.execute(
         f"""
         create temp table bots as
         with sides as (
-          select {loadout('team')} k, win::int g from read_parquet('{source}')
+          select {loadout('team', head)} k, win::int g from read_parquet('{source}')
           union all
-          select {loadout('opponent')} k, 1 - win::int g from read_parquet('{source}')
+          select {loadout('opponent', head)} k, 1 - win::int g from read_parquet('{source}')
         )
         select k, count(*) appearances, avg(g) win_rate from sides group by k
         having count(*) >= {int(args.min_appearances)} and avg(g) <= {float(args.max_win_rate)}
@@ -80,8 +91,8 @@ def main() -> None:
         f"""
         copy (
           select * from read_parquet('{source}')
-          where {loadout('team')} not in (select k from bots)
-            and {loadout('opponent')} not in (select k from bots)
+          where {loadout('team', head)} not in (select k from bots)
+            and {loadout('opponent', head)} not in (select k from bots)
         ) to '{raw_out.as_posix()}'
           (format parquet, compression zstd, row_group_size 100000,
            file_size_bytes '{args.shard_size}', filename_pattern 'nobots-part-{{i}}')
