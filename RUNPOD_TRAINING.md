@@ -44,7 +44,7 @@ set -o history
 test -n "$SUPABASE_URL" && test -n "$SUPABASE_SECRET_KEY"
 
 export TRAINING_BUCKET=training-battles
-export TRAINING_PREFIX=season-87-balanced-nobots
+export TRAINING_PREFIX=season-89-nobots
 export STORAGE_DOWNLOAD_WORKERS=16
 
 export RUNPOD_BATCH_SIZE=8192
@@ -57,6 +57,13 @@ export RUN_BENCHMARK=1
 
 bash scripts/runpod_train.sh
 ```
+
+`TRAINING_PREFIX` vaut `season-89-nobots` par défaut : la saison 89 sans les
+combats contre des bots (34 413 153 combats, 86 shards). Le script note le corpus
+téléchargé dans `/workspace/data/training-corpus.txt`. Si `/workspace/data` contient
+déjà des shards ou des splits d'un autre corpus, par exemple ceux de la saison 87
+sur un volume persistant, il s'arrête au lieu de les réutiliser : supprime
+`/workspace/data/raw` et `/workspace/data/prepared`, ou choisis un autre `DATA_ROOT`.
 
 Remplacer les deux valeurs d'exemple avant d'exécuter le bloc. Ces variables existent
 uniquement dans le terminal courant et ne viennent jamais de Git. Sur le terminal

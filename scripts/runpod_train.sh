@@ -9,6 +9,17 @@ PREPARED_DIR="${PREPARED_DIR:-$DATA_ROOT/prepared}"
 ARTIFACT_DIR="${ARTIFACT_DIR:-/workspace/artifacts}"
 CONFIG_PATH="${CONFIG_PATH:-/workspace/runpod.yaml}"
 VENV_DIR="${VENV_DIR:-/workspace/rrm-venv}"
+TRAINING_BUCKET="${TRAINING_BUCKET:-training-battles}"
+# Season 89 (Evo Giant, Evo Mirror) with bot battles removed: fixed loadouts seen
+# >= 300 times at <= 40% win rate, see data/season-89-nobots/filter-manifest.json
+# and README "Combats contre des bots". Bots drag popular decks down and skew the
+# crawled-side win rate.
+TRAINING_PREFIX="${TRAINING_PREFIX:-season-89-nobots}"
+# Records which Storage corpus the raw/prepared directories hold. A persistent
+# RunPod volume keeps /workspace/data between pods, and the prepared manifest
+# alone made the script skip the download: changing TRAINING_PREFIX would then
+# have trained silently on the previous season.
+CORPUS_MARKER="$DATA_ROOT/training-corpus.txt"
 export RAW_DIR PREPARED_DIR ARTIFACT_DIR CONFIG_PATH
 
 log_step() {
@@ -135,14 +146,24 @@ if not torch.cuda.is_available():
     raise SystemExit("CUDA is not available. Pick a GPU Pod/template before training.")
 PY
 
+expected_corpus="$TRAINING_BUCKET/$TRAINING_PREFIX"
+if [[ -f "$PREPARED_DIR/manifest.json" ]] || compgen -G "$RAW_DIR/*.parquet" > /dev/null; then
+  current_corpus="$(cat "$CORPUS_MARKER" 2>/dev/null || echo "unknown (prepared before $CORPUS_MARKER existed)")"
+  if [[ "$current_corpus" != "$expected_corpus" ]]; then
+    echo "$DATA_ROOT holds $current_corpus, not $expected_corpus."
+    echo "Remove $RAW_DIR and $PREPARED_DIR, or point DATA_ROOT at an empty directory,"
+    echo "so the splits are rebuilt from $expected_corpus."
+    exit 1
+  fi
+fi
+
 if [[ ! -f "$PREPARED_DIR/manifest.json" ]]; then
   if [[ -n "${SUPABASE_URL:-}" && -n "${SUPABASE_SECRET_KEY:-}" ]]; then
-    log_step "Pulling raw Parquet shards from Supabase Storage"
-    # season-87-balanced with bot battles removed (fixed loadouts seen >= 300 times at
-    # <= 40% win rate). Bots drag popular decks down and skew the crawled-side win rate.
+    log_step "Pulling raw Parquet shards from Supabase Storage ($expected_corpus)"
+    echo "$expected_corpus" > "$CORPUS_MARKER"
     rigged-matchup pull-storage --config "$CONFIG_PATH" \
-      --bucket "${TRAINING_BUCKET:-training-battles}" \
-      --prefix "${TRAINING_PREFIX:-season-87-balanced-nobots}" \
+      --bucket "$TRAINING_BUCKET" \
+      --prefix "$TRAINING_PREFIX" \
       --workers "${STORAGE_DOWNLOAD_WORKERS:-16}"
     log_step "Preparing chronological train/validation/test splits"
     rigged-matchup prepare --config "$CONFIG_PATH" --overwrite

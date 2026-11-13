@@ -79,7 +79,7 @@ set -o history
 test -n "$SUPABASE_URL" && test -n "$SUPABASE_SECRET_KEY"
 
 export TRAINING_BUCKET=training-battles
-export TRAINING_PREFIX=season-87-balanced-nobots
+export TRAINING_PREFIX=season-89-nobots
 export STORAGE_DOWNLOAD_WORKERS=16
 
 export RUNPOD_BATCH_SIZE=8192
@@ -89,8 +89,10 @@ export RUNPOD_NUM_WORKERS=8
 export RUNPOD_EPOCHS=15
 export RUN_ATTACH_PRIOR=0
 
-# Les quatre nouvelles graines. Le checkpoint actuel (graine 42) est le
-# cinquième membre : il n'est pas réentraîné.
+# Les quatre nouvelles graines. Le checkpoint de la graine 42 n'est le
+# cinquième membre que s'il a été entraîné sur ce même corpus
+# (season-89-nobots, mêmes splits). Un checkpoint de la saison 87 ne compte
+# pas : ajoute alors 42 en tête de SEEDS.
 export SEEDS="101 202 303 404"
 export RUN_BENCHMARK=0
 
