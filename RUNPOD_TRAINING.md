@@ -59,7 +59,11 @@ bash scripts/runpod_train.sh
 ```
 
 `TRAINING_PREFIX` vaut `season-89-nobots` par défaut : la saison 89 sans les
-combats contre des bots (34 413 153 combats, 86 shards). Le script note le corpus
+combats contre des bots (34 413 153 combats, 86 shards). `config/default.yaml`
+regroupe les ligues ranked en un seul segment (`ranked:league-1-7`) : ces shards
+portent la ligue du profil au moment du fetch, pas celle du combat (voir README,
+« Taux de victoire côté crawlé »). Le regroupement se fait dans `prepare`, les
+shards Storage ne changent pas. Le script note le corpus
 téléchargé dans `/workspace/data/training-corpus.txt`. Si `/workspace/data` contient
 déjà des shards ou des splits d'un autre corpus, par exemple ceux de la saison 87
 sur un volume persistant, il s'arrête au lieu de les réutiliser : supprime
@@ -103,11 +107,29 @@ python - <<'PY'
 import json
 from pathlib import Path
 
+import torch
+
 m = json.loads(Path('/workspace/data/prepared/manifest.json').read_text())
 print('raw_rows:', m['raw_rows'])
 print('unique_rows:', m['unique_rows'])
 print('splits:', m['counts'])
 print('cards_absent_from_train:', m['cards_absent_from_train'])
+print('ranked_league_buckets:', m['ranked_league_buckets'])  # attendu [1, 8]
+
+ck = torch.load('/workspace/artifacts/matchup-model.pt', map_location='cpu', weights_only=False)
+print('ranked segments:', [s for s in ck['vocabulary']['segments'] if s.startswith('ranked')])
+# Nouvelles formes des saisons 88 et 89 : une norme a 0 = forme jamais apprise.
+cards, state = ck['vocabulary']['cards'], ck['model_state']
+evo = state['deck_encoder.evolved_card_embedding.weight']
+hero = state['deck_encoder.hero_card_embedding.weight']
+for card_id, name, table in [
+    (26000003, 'Evo Geant', evo),
+    (28000006, 'Evo Miroir', evo),
+    (26000085, 'Evo Electro Giant', evo),
+    (26000042, 'Hero Electro Wizard', hero),
+]:
+    index = cards.get(str(card_id), cards.get(card_id))
+    print(name, 'ABSENT' if index is None else f'{table[index].norm():.3f}')
 PY
 
 ls -lh /workspace/artifacts
