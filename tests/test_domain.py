@@ -117,7 +117,30 @@ def test_ranked_model_segment_keeps_legacy_and_out_of_range_leagues_exact() -> N
     assert ranked_model_segment(8, DATA_CONFIG) == "ranked:league-8"
 
 
-def test_ranked_segment_uses_sql_league_number_before_json() -> None:
+def test_ranked_segment_prefers_the_battle_league_over_the_profile_league() -> None:
+    # The profile/SQL league is the player's league when fetched. After a
+    # promotion from 4 to 5 it would relabel the winning battles played in 4.
+    record = parse_battle_row(
+        {
+            "fingerprint": "ranked-promoted",
+            "battle_time": datetime(2026, 6, 18, tzinfo=timezone.utc),
+            "inserted_at": datetime(2026, 6, 18, tzinfo=timezone.utc),
+            "mode_key": "ranked",
+            "league_number": 5,
+            "raw": {
+                "battleTime": "20260618T000000.000Z",
+                "leagueNumber": 4,
+                "team": [player("#A", 1)],
+                "opponent": [player("#B", 0, 100)],
+            },
+        },
+        DATA_CONFIG,
+    )
+    assert record is not None
+    assert record["segment"] == "ranked:league-4"
+
+
+def test_ranked_segment_falls_back_to_the_stored_league_without_a_battle_league() -> None:
     record = parse_battle_row(
         {
             "fingerprint": "ranked-sql-league",

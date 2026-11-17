@@ -280,13 +280,23 @@ def parse_battle_row(row: dict[str, Any], data_config: dict[str, Any]) -> dict[s
         return None
     battle_time = _as_datetime(row.get("battle_time") or raw.get("battleTime"))
     inserted_at = _as_datetime(row.get("inserted_at"))
-    sql_league = _optional_int(row.get("league_number"))
-    if mode_key == "ranked" and sql_league is not None and sql_league > 0:
-        segment = f"ranked:league-{sql_league}"
-    elif mode_key == "ranked":
-        # Raw extracts keep the exact league. Pooling is applied by ``prepare``
-        # so bucket edges can change without recollecting historical battles.
-        segment = ranked_segment(raw)
+    if mode_key == "ranked":
+        # The battle's own `leagueNumber` is the league it was played in. The
+        # row's `league_number` comes from the player's profile (or the
+        # `public.players` table), i.e. the league they sit in when fetched: a
+        # player promoted from league 4 to 5 has the wins that promoted them
+        # labelled league 5. That made the segment a function of the outcome --
+        # season 89 read 42.9% team wins in league 1 and 55.5% in league 5 -- so
+        # the profile value is only a fallback for battles that carry none.
+        # Raw extracts keep the exact league; ``prepare`` pools it.
+        battle_league = ranked_league_number(raw)
+        stored_league = _optional_int(row.get("league_number"))
+        if battle_league is not None:
+            segment = f"ranked:league-{battle_league}"
+        elif stored_league is not None and stored_league > 0:
+            segment = f"ranked:league-{stored_league}"
+        else:
+            segment = "ranked:unknown"
     else:
         segment = segment_for(team, mode_key, data_config, raw)
     return {

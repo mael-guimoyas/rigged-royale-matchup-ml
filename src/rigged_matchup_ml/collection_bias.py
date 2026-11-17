@@ -43,6 +43,7 @@ import duckdb
 from .api_collect import _ladder_bucket_label, _normalize_baseline, _segment_tracked
 from .card_stats import CARD_ELIXIR
 from .config import AppConfig
+from .prepare import _ranked_segment_sql
 
 # Practical-significance thresholds. On millions of rows every deviation is
 # statistically significant, so a bare p-value would flag noise: each check needs
@@ -154,11 +155,17 @@ def collection_bias_report(
             raise RuntimeError(f"Raw shards in {directory} hold no rows")
         wins = int(wins or 0)
 
+        # Segments as the model sees them: ranked leagues pooled by
+        # `data.ranked_league_buckets` exactly like `prepare` does. The side
+        # balance check is about what the model can fit, and shards collected
+        # before the battle-league fix carry the player's league at fetch time,
+        # which only the pooled segment is free of.
         segment_rows = connection.execute(
-            """
-            select segment, count(*) as row_count, sum(case when win then 1 else 0 end) as wins
+            f"""
+            select {_ranked_segment_sql(config.data)} as model_segment, count(*) as row_count,
+                   sum(case when win then 1 else 0 end) as wins
             from battles
-            group by segment
+            group by model_segment
             order by row_count desc
             """
         ).fetchall()

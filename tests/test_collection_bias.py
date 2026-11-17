@@ -160,6 +160,45 @@ def test_tiny_even_skew_is_not_flagged(tmp_path: Path) -> None:
     assert "side_balance" not in _codes(report)
 
 
+def test_segment_side_balance_uses_pooled_ranked_leagues(tmp_path: Path) -> None:
+    """A league read off the profile at fetch time splits one even population into
+    a losing league and a winning one (promotions carry their wins upward). Pooled
+    the way `prepare` pools it, the model sees one even segment, so no flag."""
+    rows = _clean_rows()
+    index = len(rows)
+    for league, wins_every in ((4, 5), (5, 5)):
+        for position in range(6000):
+            # League 4: 2 wins in 5 (40%); league 5: 3 wins in 5 (60%).
+            won = position % wins_every < (2 if league == 4 else 3)
+            rows.append(
+                _row(
+                    index,
+                    ("ranked", f"ranked:league-{league}"),
+                    team_deck=index % 120,
+                    opponent_deck=(index + 1) % 120,
+                    win=won,
+                    battle_time=NOW - timedelta(seconds=index),
+                )
+            )
+            index += 1
+    raw_dir = _write(rows, tmp_path / "raw")
+
+    exact = collection_bias_report(CONFIG, raw_dir=raw_dir, include_cards=False)
+    assert "segment_side_balance" in _codes(exact)
+
+    pooled_config = AppConfig(
+        raw={
+            **CONFIG.raw,
+            "data": {**CONFIG.raw["data"], "ranked_league_buckets": [1, 8]},
+        },
+        source_path=CONFIG.source_path,
+    )
+    pooled = collection_bias_report(pooled_config, raw_dir=raw_dir, include_cards=False)
+    assert "segment_side_balance" not in _codes(pooled)
+    segments = {entry["segment"] for entry in pooled["segments"]["rows_by_segment"]}
+    assert "ranked:league-1-7" in segments
+
+
 def test_missing_band_and_imbalance_are_flagged(tmp_path: Path) -> None:
     rows = [row for row in _clean_rows() if row["segment"] != "ladder:14000-999998"]
     rows.extend(

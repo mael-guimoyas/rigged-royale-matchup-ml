@@ -27,8 +27,13 @@ data:
   # sentinel above the currently reachable road.
   trophy_buckets: [0, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 11000, 12000, 13000, 14000, 15000, 16000, 17000, 18000, 19000, 20000, 999999]
   top_ladder_buckets: [100, 1000, 10000]
-  # No model-side pooling: each ranked league remains its own segment.
-  ranked_league_buckets: []
+  # All ranked leagues pooled into one model segment (ranked:league-1-7). Shards
+  # collected before the battle-league fix (all of season 89 up to shard 001901)
+  # carry the player's league at fetch time, not the league of the battle: a
+  # promotion relabels the wins that caused it, so per-league segments read 42.9%
+  # team wins in league 1 and 55.5% in league 5. Pooled, ranked reads 49.6%.
+  # Go back to [] once the corpus is recollected with the battle's leagueNumber.
+  ranked_league_buckets: [1, 8]
   # collect-api drops ladder battles/opponents below this trophy count: we don't
   # train on sub-5000 ladder, and queueing them only bloats the crawl frontier.
   collect_min_trophies: 5000

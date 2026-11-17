@@ -353,6 +353,37 @@ def test_fetch_player_loads_profile_for_a_fresh_ranked_battle() -> None:
     assert client.player_calls == 1
 
 
+def test_fetch_player_uses_the_battle_league_and_skips_the_profile() -> None:
+    # The stub profile says league 7 (the league *now*); the battles say where
+    # they were played. A promotion inside the log must not relabel them.
+    now = datetime.now(timezone.utc)
+    before = _battle(battle_time=_api_time(now - timedelta(hours=2)))
+    before["leagueNumber"] = 6
+    after = _battle(battle_time=_api_time(now - timedelta(hours=1)))
+    after["leagueNumber"] = 7
+    after["opponent"][0]["tag"] = "#CCC"
+    client = _StubClient([after, before])
+
+    records, candidates, _seen, _stale = _fetch_player(
+        client,
+        "#AAA",
+        DATA_CONFIG,
+        {"ladder", "ranked"},
+        snowball=True,
+        min_trophies=5000,
+        max_age_days=2,
+    )
+
+    assert sorted(record["segment"] for record in records) == [
+        "ranked:league-6",
+        "ranked:league-7",
+    ]
+    assert client.player_calls == 0
+    leagues = {candidate[0]: candidate[3] for candidate in candidates}
+    assert leagues["#BBB"] == 6
+    assert leagues["#CCC"] == 7
+
+
 def test_worker_count_auto_sizes_for_target_rate_and_honors_override() -> None:
     assert _effective_worker_count(22, 75) == 22
     assert _effective_worker_count(0, 75) == 188

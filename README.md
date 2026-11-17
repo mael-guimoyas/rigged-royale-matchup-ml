@@ -469,6 +469,40 @@ un bot qui varie sa configuration sous 300 parties passe, et une configuration �
 partagée par des joueurs faibles peut être prise à tort ; sans tag joueur on ne peut pas
 faire mieux.
 
+#### Taux de victoire côté crawlé (saison 89)
+
+Après le filtre anti-bots, `diagnose-bias` signalait encore `segment_side_balance` sur
+16 segments. Deux causes distinctes, mesurées le 17 novembre 2026 sur les 963 shards bruts
+(l'ordre d'écriture garde les combats d'un même fetch contigus, ce qui permet de
+reconstituer chaque joueur crawlé sans tag) :
+
+- **Ranked : bug de collecte, corrigé.** Un combat Path of Legends porte la ligue où il a
+  été joué (`leagueNumber` dans le battlelog), mais le segment prenait la ligue du profil
+  au moment du fetch. Une promotion de 4 à 5 réétiquetait en ligue 5 les victoires qui
+  l'avaient provoquée : 42,9 % de victoires côté crawlé en ligue 1, 55,5 % en ligue 5.
+  `parse_battle_row` et `collect-api` prennent désormais la ligue du combat ; le profil
+  n'est plus qu'un repli (et n'est plus appelé quand tous les combats ranked en ont une).
+  Les shards déjà collectés ne contiennent pas le JSON brut, donc la saison 89 regroupe
+  toutes les ligues (`ranked_league_buckets: [1, 8]`) : le ranked regroupé est à 49,6 %.
+  `diagnose-bias` juge désormais l'équilibre sur les segments du modèle (ligues regroupées
+  comme dans `prepare`). Revenir à `[]` après une recollecte.
+- **Ladder : biais d'échantillonnage des joueurs, non corrigé.** Le segment vient des
+  trophées au départ du combat, il n'est pas en cause. Le joueur crawlé gagne 52 à 55 % à
+  trophées égaux, et ce taux dépend fortement de son volume dans le fetch (48 % sous 4
+  combats gardés, 60 % au-delà de 25) et de la position dans son battlelog (43 % pour le
+  plus récent, 64 % pour le 25ᵉ ; ces deux mesures sur un échantillon de 31 shards). Ce n'est pas une propriété du jeu (entre humains, un
+  combat a un gagnant et un perdant) : le snowball sur-représente certains joueurs côté
+  `team`. Les bots résiduels n'expliquent qu'une petite partie : des decks entiers
+  passent le filtre par loadout en variant niveaux Evo/Hero ou tour (un deck vu 141 364
+  fois à 37 %, 73 % côté adversaire), et des adversaires apparaissent exactement aux
+  trophées du joueur (3 fois plus souvent qu'attendu), mais les retirer ne déplace l'écart
+  que de 0,5 à 1 point. Une pondération par joueur crawlé (au plus 5 combats chacun)
+  ramène le ladder entre −0,8 et +1,4 point avec 73 % de taille effective, mais pousse le
+  ranked dans l'autre sens : le mécanisme n'est pas assez compris pour l'appliquer, et les
+  shards n'ont pas d'identifiant de fetch pour la calculer proprement. Impact sur le
+  modèle limité : l'architecture antisymétrique ne peut pas apprendre un écart de camp,
+  et les decks ladder fréquents sont répartis à 49 % (médiane) côté crawlé.
+
 ### 3. Entraînement
 
 Option recommandée avant l'entraînement : attacher un prior empirique reconstruit

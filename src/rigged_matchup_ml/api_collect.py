@@ -206,6 +206,18 @@ def league_from_profile(profile: dict[str, Any] | None) -> int | None:
     return None
 
 
+def _battle_league(battle: dict[str, Any]) -> int | None:
+    """League a Path of Legends battle was played in, from its top-level `leagueNumber`."""
+    league = battle.get("leagueNumber")
+    if isinstance(league, bool):
+        return None
+    if isinstance(league, int) and league > 0:
+        return league
+    if isinstance(league, str) and league.isdigit() and int(league) > 0:
+        return int(league)
+    return None
+
+
 def _battle_time(battle: dict[str, Any]) -> datetime | None:
     """Parse the API `battleTime` ("20260601T120000.000Z"); None when unusable.
 
@@ -303,9 +315,10 @@ def _opponent_candidates(
     can skip sub-5000 ladder players (we don't train on them) and steer the crawl
     toward under-filled trophy bands.
 
-    Ranked (Path of Legends) battles hide trophies, so the league of the player
-    whose battlelog this came from is carried instead: matchmaking pairs like
-    with like, so their opponents sit in the same league to within a step. That
+    Ranked (Path of Legends) battles hide trophies, so the league the battle was
+    played in is carried instead (the battle's own `leagueNumber`, the fetched
+    player's profile league only when the battle has none): matchmaking pairs
+    like with like, so the opponent sat in that league too. That
     is what lets the frontier treat each league as its own band rather than
     pooling all of ranked -- without it the thin high leagues can never be
     targeted, because the pooled bucket's count is dominated by league 1-3 and
@@ -1065,11 +1078,17 @@ def _fetch_player(
     stale = len(battles) - len(fresh_battles)
 
     league: int | None = None
-    # A stale ranked battle does not need a league: it will be discarded below.
-    # Likewise, skip the profile endpoint when ranked is excluded altogether.
-    # This removes one request for inactive and ladder-only players.
+    # A ranked battle carries the league it was played in (`leagueNumber`), which
+    # is what the segment must use: the profile only knows the player's league
+    # *now*, so after a promotion it relabels the winning streak that caused it.
+    # The profile is fetched only as a fallback, for a fresh ranked battle that
+    # carries no league. A stale ranked battle does not need one (it is discarded
+    # below), and nothing is fetched when ranked is excluded altogether.
     ranked_allowed = not allowed_modes or "ranked" in allowed_modes
-    if ranked_allowed and any(mode_key_for(battle) == "ranked" for battle in fresh_battles):
+    if ranked_allowed and any(
+        mode_key_for(battle) == "ranked" and _battle_league(battle) is None
+        for battle in fresh_battles
+    ):
         try:
             league = league_from_profile(client.player(tag))
         except (OSError, HTTPException, ValueError):
@@ -1077,9 +1096,12 @@ def _fetch_player(
     records: list[dict[str, Any]] = []
     candidates: list[tuple[str, str, int | None, int | None]] = []
     for battle in fresh_battles:
-        if snowball:
-            candidates.extend(_opponent_candidates(battle, league))
         mode_key = mode_key_for(battle)
+        battle_league = _battle_league(battle) if mode_key == "ranked" else None
+        if battle_league is None and mode_key == "ranked":
+            battle_league = league
+        if snowball:
+            candidates.extend(_opponent_candidates(battle, battle_league))
         if allowed_modes and mode_key not in allowed_modes:
             continue
         row = {
@@ -1088,7 +1110,7 @@ def _fetch_player(
             "battle_time": battle.get("battleTime"),
             "inserted_at": _now_iso(),
             "mode_key": mode_key,
-            "league_number": league if mode_key == "ranked" else None,
+            "league_number": battle_league if mode_key == "ranked" else None,
         }
         parsed = parse_battle_row(row, data_config)
         if parsed is not None and _segment_tracked(parsed["segment"], min_trophies):
